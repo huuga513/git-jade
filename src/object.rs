@@ -1,3 +1,5 @@
+use std::{fs::{self, File}, io::{Read, Write}, path::{Path, PathBuf}};
+
 use sha1::{Digest, Sha1};
 use memchr::memchr;
 use hex;
@@ -123,10 +125,123 @@ impl Blob {
         })
     }
 }
+// Database structure
+pub struct ObjectDB {
+    path: PathBuf,
+}
 
+impl ObjectDB {
+    /// Create new object database
+    pub fn new(path: &Path) -> Result<ObjectDB, &str> {
+        if !path.is_dir() {
+            return Err("Objects dir not exists!");
+        }
+        let path_buf = path.to_path_buf();
+        Ok(ObjectDB { path: path_buf })
+    }
+
+    /// Store object in database
+    pub fn store(&self, obj: &impl Object) -> std::io::Result<String> {
+        // Generate SHA1 hash
+        let encoded_sha = obj.encoded_sha1();
+        let (dir_part, file_part) = encoded_sha.split_at(2);
+
+        // Build storage path
+        let obj_dir = self.path.join(dir_part);
+        let obj_path = obj_dir.join(file_part);
+
+        // Avoid duplicate writes
+        if !obj_path.exists() {
+            // Create directory
+            fs::create_dir_all(&obj_dir)?;
+            
+            // Write data
+            let mut file = File::create(&obj_path)?;
+            file.write_all(&obj.serialize())?;
+        }
+
+        Ok(encoded_sha)
+    }
+
+    /// Retrieve object from database
+    pub fn retrieve(&self, encoded_sha: &str) -> std::io::Result<Vec<u8>> {
+        // Validate SHA format
+        if encoded_sha.len() != 40 || !encoded_sha.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Invalid SHA1 hash format"
+            ));
+        }
+
+        // Parse path
+        let (dir_part, file_part) = encoded_sha.split_at(2);
+        let obj_path = self.path.join(dir_part).join(file_part);
+
+        // Read file
+        let mut file = File::open(obj_path)?;
+        let mut contents = Vec::new();
+        file.read_to_end(&mut contents)?;
+
+        Ok(contents)
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
+
+    struct TestObject(Vec<u8>);
+
+    impl Object for TestObject {
+        fn serialize(&self) -> Vec<u8> {
+            self.0.clone()
+        }
+
+        // Other trait methods use default implementations
+    }
+
+    #[test]
+    fn test_store_and_retrieve() {
+        let temp_dir = TempDir::new().unwrap();
+        let db = ObjectDB::new(temp_dir.path()).unwrap();
+
+        // Test object
+        let obj = TestObject(b"test data".to_vec());
+        let sha = db.store(&obj).unwrap();
+
+        // Verify path structure
+        let stored_path = db.path.join(&sha[..2]).join(&sha[2..]);
+        assert!(stored_path.exists());
+
+        // Read and verify
+        let retrieved = db.retrieve(&sha).unwrap();
+        assert_eq!(retrieved, obj.serialize());
+    }
+
+    #[test]
+    fn test_invalid_sha() {
+        let temp_dir = TempDir::new().unwrap();
+        let db = ObjectDB::new(temp_dir.path()).unwrap();
+
+        // Short hash
+        assert!(db.retrieve("abcd").is_err());
+        // Invalid characters
+        assert!(db.retrieve("z".repeat(40).as_str()).is_err());
+    }
+
+    #[test]
+    fn test_idempotent_store() {
+        let temp_dir = TempDir::new().unwrap();
+        let db = ObjectDB::new(temp_dir.path()).unwrap();
+        let obj = TestObject(vec![1, 2, 3]);
+
+        // First store
+        let sha1 = db.store(&obj).unwrap();
+        // Second store
+        let sha2 = db.store(&obj).unwrap();
+        
+        assert_eq!(sha1, sha2);
+    }
     #[test]
     fn determine_type_works() {
         let blob_data = b"blob 12\0hello world";

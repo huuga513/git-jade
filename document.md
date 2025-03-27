@@ -66,8 +66,10 @@ write-tree: 将当前的index内容创建并同步到一组 tree 文件中
 
 1. commit-tree 指定一个 tree 对象的 sha1 和 可能存在的 父亲 提交，创建一个 commit 对象
 ## ObjectDB 对象数据库操作
+给定一个 path，可以基于这个 path 创建一个 ObjectDB 结构
+
 ObjectDB 仅支持两种操作
-1. 将一个实现了 Object trait 的对象存入 OBJECT DIR
+1. 将一个实现了 Object trait 的对象存入 OBJECT DIR；使用 encoded sha1 确定存储位置和文件名，前两位作为子文件夹名，后18位作为文件名
 2. 给定 sha1， 从 OBJECT DIR 取出对应的文件，返回字节流
    
 ## index
