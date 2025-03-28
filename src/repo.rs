@@ -202,8 +202,18 @@ impl Repository {
         index.save(&index_path)?;
         Ok(())
     }
-    /// Convert index to tree objects and store them, returning root tree's SHA1
-    pub fn write_tree(&self) -> Result<EncodedSha, String> {
+    /// Converts the index into tree objects and stores them in the object database,
+    /// returning the SHA1 hash of the root tree.
+    /// 
+    /// # Workflow
+    /// 1. Loads the index file from `.git/index`
+    /// 2. Recursively constructs tree objects from directory structure
+    /// 3. Stores all tree objects in the object database
+    /// 
+    /// # Returns
+    /// - `Ok(EncodedSha)`: 40-character SHA1 hash of root tree
+    /// - `Err(String)`: Error description if any operation fails
+    fn write_tree(&self) -> Result<EncodedSha, String> {
         let index_path = self.git_dir.join(INDEX_FILE);
         let index = Index::load(&index_path)?;
         let root = index.get_root();
@@ -215,36 +225,12 @@ impl Repository {
             if child.is_file() {
                 tree.add_entry(ObjectType::Blob, &child.get_sha1().unwrap(), &name);
             } else {
-                let subdir_tree_sha1 = self.write_tree_impl(child);
+                let subdir_tree_sha1 = self.write_tree_impl(child).unwrap();
+                tree.add_entry(ObjectType::Tree, &subdir_tree_sha1, name);
             }
         }
-        todo!()
-    }
-    fn group_files_by_directory(
-        file_paths: &[(&String, &String)],
-    ) -> HashMap<String, Vec<(String, String)>> {
-        let mut dir_map: HashMap<String, Vec<(String, String)>> = HashMap::new();
-
-        for &path in file_paths {
-            let p = path::Path::new(path.0);
-            let sha = path.1;
-
-            // get parent dir (repository dir is repersented by '.')
-            let parent = p.parent().unwrap_or_else(|| path::Path::new("."));
-
-            let parent_str = parent.to_str().unwrap();
-            // get filename
-            if let Some(file_name) = p.file_name() {
-                if let Some(name) = file_name.to_str() {
-                    dir_map
-                        .entry(parent_str.to_string())
-                        .or_insert_with(Vec::new)
-                        .push((name.to_string(), sha.to_string()));
-                }
-            }
-        }
-
-        dir_map
+        let sha = self.obj_db.store(&tree).map_err(|why|why.to_string())?;
+        Ok(sha)
     }
 }
 
