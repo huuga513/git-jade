@@ -3,6 +3,7 @@ use std::path::{Component, Path};
 use std::fmt;
 
 /// Represents a snapshot of tracked files in repository
+ #[derive(Debug)]
 pub struct Index {
     /// Using BTreeMap for ordered entries (path -> SHA1)
     entries: BTreeMap<String, String>,
@@ -66,6 +67,30 @@ impl Index {
 
         normalized
     }
+
+    pub fn load(index_path: &Path) -> Result<Index, String>{
+        if !index_path.exists() {
+            return Err(format!("index file {} not found", index_path.to_str().unwrap()));
+        }
+        let content = std::fs::read_to_string(&index_path).map_err(|e| e.to_string())?;
+        let mut entries = BTreeMap::new();
+        for line in content.lines() {
+            let parts: Vec<&str> = line.splitn(2, ' ').collect();
+            if parts.len() != 2 {
+                return Err("Invalid index format".to_string());
+            }
+            entries.insert(parts[0].to_string(), parts[1].to_string());
+        }
+        Ok(Index { entries })
+    }
+
+    pub fn save(&self, index_path: &Path) -> Result<(), String> {
+        let mut content = String::new();
+        for (path, sha1) in &self.entries {
+            content.push_str(&format!("{} {}\n", path, sha1));
+        }
+        std::fs::write(&index_path, content).map_err(|e| e.to_string())
+    }
 }
 
 /// Display implementation for debugging
@@ -120,6 +145,66 @@ mod tests {
             index.get_sha1("parent.txt"), // Relative components resolved
             Some(&"sha2".into())
         );
+    }
+    use tempfile::NamedTempFile;
+    use std::io::Write;
+
+    /// Test loading non-existent index file
+    #[test]
+    fn test_load_missing_file() {
+        let non_existent = Path::new("non_existent_index");
+        let result = Index::load(non_existent);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+    }
+
+    /// Test loading valid index format
+    #[test]
+    fn test_load_valid_format() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "file1.txt abcde12345\nsubdir/file2.txt 67890fghij").unwrap();
+        
+        let index = Index::load(file.path()).unwrap();
+        assert_eq!(index.entries.len(), 2);
+        assert_eq!(index.entries.get("file1.txt"), Some(&"abcde12345".to_string()));
+        assert_eq!(index.entries.get("subdir/file2.txt"), Some(&"67890fghij".to_string()));
+    }
+
+    /// Test loading invalid index format
+    #[test]
+    fn test_load_invalid_format() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "bad_line_without_space").unwrap();
+        
+        let result = Index::load(file.path());
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Invalid index format");
+    }
+
+    /// Test saving normal index entries
+    #[test]
+    fn test_save_normal_entries() {
+        let mut index = Index::new();
+        index.entries.insert("a.txt".to_string(), "123".to_string());
+        index.entries.insert("b/c.txt".to_string(), "456".to_string());
+
+        let file = NamedTempFile::new().unwrap();
+        index.save(file.path()).unwrap();
+
+        let content = std::fs::read_to_string(file.path()).unwrap();
+        assert!(content.contains("a.txt 123\n"));
+        assert!(content.contains("b/c.txt 456\n"));
+    }
+
+    /// Test saving empty index
+    #[test]
+    fn test_save_empty_index() {
+        let index = Index::new();
+        let file = NamedTempFile::new().unwrap();
+        
+        index.save(file.path()).unwrap();
+        let content = std::fs::read_to_string(file.path()).unwrap();
+        assert!(content.is_empty());
     }
 }
 #[cfg(test)]

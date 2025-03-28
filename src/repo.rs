@@ -1,6 +1,6 @@
 use core::error;
 use std::error::Error;
-use std::{env, fs};
+use std::{env, fs, path};
 use std::path::{Path, PathBuf};
 use super::object::ObjectDB;
 const OBJECTS_DIR: &str = "objects";
@@ -78,6 +78,7 @@ impl Repository {
     /// Open a repository based on the repository dir
     /// The git dir should be {dir}/{GIT_DIR}
     pub fn open(dir: &Path) -> Result<Repository, String> {
+        let dir = path::absolute(dir).map_err(|_| "Failed to get dir abs path")?;
         let git_dir = dir.join(GIT_DIR);
         if !Repository::is_vaild_git_dir(&git_dir) {
             return Err(format!("{} isn't a vaild git dir", git_dir.to_str().unwrap()));
@@ -91,6 +92,26 @@ impl Repository {
             }
         };
         Ok(Repository { dir: dir.to_path_buf(), git_dir: git_dir, work_dir: work_dir, obj_db: obj_db })
+    }
+
+    fn is_file_path_vaild(&self, file_path: &Path) -> bool {
+        let abs_path = path::absolute(file_path).unwrap();
+        // file path should in repository dir
+        if !abs_path.starts_with(&self.dir) {
+            return false;
+        }
+        // file path should not in git dir
+        if abs_path.starts_with(&self.git_dir) {
+            return false;
+        }
+        return true;
+    }
+
+    fn update_index(&self, file_path: &Path) -> Result<(), String> {
+        if !self.is_file_path_vaild(file_path) {
+            return Err("File path invaild!".to_string());
+        }
+        Ok(())
     }
 }
 
