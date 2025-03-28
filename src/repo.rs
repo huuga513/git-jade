@@ -1,10 +1,10 @@
+use super::index::Index;
+use super::object::{Blob, ObjectDB};
 use core::error;
 use std::error::Error;
 use std::fmt::format;
-use std::{env, fs, path};
 use std::path::{Path, PathBuf};
-use super::object::{ObjectDB, Blob};
-use super::index::Index;
+use std::{env, fs, path};
 const OBJECTS_DIR: &str = "objects";
 const REFS_DIR: &str = "refs";
 const HEAD_FILE: &str = "HEAD";
@@ -12,8 +12,8 @@ const GIT_DIR: &str = ".git";
 const INDEX_FILE: &str = "index";
 
 pub struct Repository {
-    dir: PathBuf, // Path to the repository directory.
-    git_dir: PathBuf, // Path to the git directory ({dir}/{GIT_DIR}).
+    dir: PathBuf,      // Path to the repository directory.
+    git_dir: PathBuf,  // Path to the git directory ({dir}/{GIT_DIR}).
     work_dir: PathBuf, // Path to the current working directory.
     obj_db: ObjectDB,
 }
@@ -54,7 +54,7 @@ impl Repository {
         if git_dir.exists() {
             return Err("git directory already exists");
         }
-         // Create .git directory
+        // Create .git directory
         fs::create_dir(&git_dir).map_err(|_| "Failed to create git directory")?;
 
         // Create objects directory
@@ -67,8 +67,8 @@ impl Repository {
 
         // Create HEAD file and write initial content
         let head_file = git_dir.join(HEAD_FILE);
-        
-        let _ = fs::File::create(head_file).map_err(|_|"Failed to create head file");
+
+        let _ = fs::File::create(head_file).map_err(|_| "Failed to create head file");
         let work_dir = env::current_dir().map_err(|_| "Failed to get current working dir")?;
         let obj_db = match ObjectDB::new(&objects_dir) {
             Ok(obj_db) => obj_db,
@@ -76,7 +76,12 @@ impl Repository {
                 return Err("Failed to create object db");
             }
         };
-        Ok(Repository { dir: dir.to_path_buf(), git_dir: git_dir, work_dir: work_dir, obj_db: obj_db })
+        Ok(Repository {
+            dir: dir.to_path_buf(),
+            git_dir: git_dir,
+            work_dir: work_dir,
+            obj_db: obj_db,
+        })
     }
     /// Open a repository based on the repository dir
     /// The git dir should be {dir}/{GIT_DIR}
@@ -84,7 +89,10 @@ impl Repository {
         let dir = path::absolute(dir).map_err(|_| "Failed to get dir abs path")?;
         let git_dir = dir.join(GIT_DIR);
         if !Repository::is_vaild_git_dir(&git_dir) {
-            return Err(format!("{} isn't a vaild git dir", git_dir.to_str().unwrap()));
+            return Err(format!(
+                "{} isn't a vaild git dir",
+                git_dir.to_str().unwrap()
+            ));
         }
         let work_dir = env::current_dir().map_err(|_| "Failed to get current working dir")?;
         let objects_dir = git_dir.join(OBJECTS_DIR);
@@ -94,15 +102,20 @@ impl Repository {
                 return Err("Failed to create object db".to_string());
             }
         };
-        Ok(Repository { dir: dir.to_path_buf(), git_dir: git_dir, work_dir: work_dir, obj_db: obj_db })
+        Ok(Repository {
+            dir: dir.to_path_buf(),
+            git_dir: git_dir,
+            work_dir: work_dir,
+            obj_db: obj_db,
+        })
     }
 
     /// Validates if a file path meets repository requirements
-    /// 
+    ///
     /// # Conditions
     /// 1. The path must be contained within the repository directory
     /// 2. The path must NOT be inside the .git directory
-    /// 
+    ///
     /// # Returns
     /// - true: Path meets both conditions
     /// - false: Path violates either condition
@@ -119,14 +132,14 @@ impl Repository {
         return true;
     }
     /// Converts an absolute path to repository-relative format
-    /// 
+    ///
     /// # Parameters
     /// - file_path: Absolute path to convert
-    /// 
+    ///
     /// # Returns
     /// - Ok(PathBuf): Relative path from repository root
     /// - Err(String): Original path isn't in repository directory
-    /// 
+    ///
     /// # Example
     /// - Input: "/repo/foo/bar.txt"
     /// - Output: "foo/bar.txt" (when repo root is "/repo")
@@ -138,7 +151,7 @@ impl Repository {
         }
     }
     /// Updates the index with file changes
-    /// 
+    ///
     /// # Workflow
     /// 1. Validate path security
     /// 2. Convert to repository-relative path
@@ -148,29 +161,39 @@ impl Repository {
     ///    - Missing file: Remove existing entry
     fn update_index(&self, file_path: &Path) -> Result<(), String> {
         if !self.is_file_path_vaild(file_path) {
-            return Err(format!("File path {} invaild!", file_path.to_str().unwrap()));
+            return Err(format!(
+                "File path {} invaild!",
+                file_path.to_str().unwrap()
+            ));
         }
-        let entry_file_path = self.turn_relative_path_to_repo_dir(&file_path)?.to_str().unwrap().to_string();
+        let entry_file_path = self
+            .turn_relative_path_to_repo_dir(&file_path)?
+            .to_str()
+            .unwrap()
+            .to_string();
 
         if file_path.exists() && !file_path.is_file() {
             return Err(format!("{} isn't a file", file_path.to_str().unwrap()));
         }
-        
+
         let index_path = self.git_dir.join(INDEX_FILE);
         if !index_path.is_file() {
-            let _ = fs::File::create_new(&index_path).map_err(|err|err.to_string());
+            let _ = fs::File::create_new(&index_path).map_err(|err| err.to_string());
         }
         let mut index = Index::load(&index_path)?;
         if file_path.exists() {
             let blob = Blob::new(&file_path)?;
-            let sha1 = self.obj_db.store(&blob).map_err(|why|why.to_string())?;
+            let sha1 = self.obj_db.store(&blob).map_err(|why| why.to_string())?;
             index.update_entry(&entry_file_path, sha1);
         } else {
             if index.get_sha1(&entry_file_path).is_some() {
                 // delete the entry from index
                 index.remove_entry(&entry_file_path);
             } else {
-                return Err(format!("{} isn't a known file to git", file_path.to_str().unwrap()));
+                return Err(format!(
+                    "{} isn't a known file to git",
+                    file_path.to_str().unwrap()
+                ));
             }
         }
         index.save(&index_path)?;
@@ -215,7 +238,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let repo = Repository::init(temp_dir.path()).unwrap();
         let file_path = create_file(&repo, "test.txt", "content");
-        
+
         // First update (add)
         repo.update_index(&file_path).unwrap();
         let index = Index::load(&repo.git_dir.join("index")).unwrap();
@@ -227,13 +250,13 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let repo = Repository::init(temp_dir.path()).unwrap();
         let file_path = create_file(&repo, "update.txt", "v1");
-        
+
         // First add
         repo.update_index(&file_path).unwrap();
         let index_path = repo.git_dir.join(INDEX_FILE);
         let index = Index::load(&index_path).unwrap();
         let original_sha = index.get_sha1("update.txt").unwrap().clone();
-        
+
         // Update content
         create_file(&repo, "update.txt", "v2");
         repo.update_index(&file_path).unwrap();
@@ -247,14 +270,14 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let repo = Repository::init(temp_dir.path()).unwrap();
         let file_path = create_file(&repo, "to_delete.txt", "content");
-        
+
         // Add to index
         repo.update_index(&file_path).unwrap();
-        
+
         // Delete file and update
         fs::remove_file(&file_path).unwrap();
         repo.update_index(&file_path).unwrap();
-        
+
         let index = Index::load(&repo.git_dir.join("index")).unwrap();
         assert!(index.get_sha1("to_delete.txt").is_none());
     }
@@ -264,7 +287,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let repo = Repository::init(temp_dir.path()).unwrap();
         let bad_path = temp_dir.path().join("ghost.txt");
-        
+
         let result = repo.update_index(&bad_path);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("isn't a known file"));
@@ -274,12 +297,12 @@ mod tests {
     fn test_update_index_security_checks() {
         let temp_dir = TempDir::new().unwrap();
         let repo = Repository::init(temp_dir.path()).unwrap();
-        
+
         // Test outside repo path
         let external_path = temp_dir.path().parent().unwrap().join("external.txt");
         let result = repo.update_index(&external_path);
         assert!(result.is_err());
-        
+
         // Test .git directory path
         let git_path = repo.git_dir.join("config");
         let result = repo.update_index(&git_path);
@@ -292,7 +315,7 @@ mod tests {
         let repo = Repository::init(temp_dir.path()).unwrap();
         let dir_path = repo.dir.join("subdir");
         fs::create_dir(&dir_path).unwrap();
-        
+
         let result = repo.update_index(&dir_path);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("isn't a file"));
