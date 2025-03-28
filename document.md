@@ -48,7 +48,7 @@ trait 方法：
 从一个文件中构建，contents 是文件的内容
 从一个字节流中构建
 ### Tree
-一个map，将文件名映射到文件对应 object 的 sha1
+一个map，将文件名映射到文件对应 object 的 sha1 和 object 的 type (blob 或 tree)
 
 保存的 contents：
 {object type} {object sha1} {filename}
@@ -104,6 +104,8 @@ update-index(files) 命令指定了index需要与 repository 同步的文件。
 最后将 Index 结构写回磁盘。
 
 write-tree 命令可以将 index 转储为一组 tree 对象，创建并存储对应的文件。返回 repository 对应的 tree 对象的 sha1。此过程相当地简单和直接，因为 ObjectDB不会额外存储一个已经存在的对象，所以无需判断是否存在。
+
+write-tree 在内部使用递归实现。即指定一个前缀（prefix），代表写入表示子目录 \<prefix\> 的树对象。如果write tree 写入的子目录内不存在其他子目录，则创建一个 tree 对象并返回其 sha1。否则，递归将子目录转储成一组 tree 对象。
 
 ## HEAD
 
