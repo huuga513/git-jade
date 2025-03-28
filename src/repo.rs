@@ -1,11 +1,12 @@
-use super::index::Index;
-use super::object::{Blob, ObjectDB, ObjectType, Tree, TreeEntry};
+use super::index::{Index, TreeNode};
+use super::object::{Blob, ObjectDB, ObjectType, Tree};
 use core::error;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::format;
 use std::path::{Path, PathBuf};
 use std::{env, fs, path};
+use super::EncodedSha;
 const OBJECTS_DIR: &str = "objects";
 const REFS_DIR: &str = "refs";
 const HEAD_FILE: &str = "HEAD";
@@ -18,6 +19,7 @@ pub struct Repository {
     work_dir: PathBuf, // Path to the current working directory.
     obj_db: ObjectDB,
 }
+
 
 impl Repository {
     pub fn is_vaild_git_dir(path: &Path) -> bool {
@@ -201,10 +203,21 @@ impl Repository {
         Ok(())
     }
     /// Convert index to tree objects and store them, returning root tree's SHA1
-    pub fn write_tree(&self) -> Result<String, String> {
+    pub fn write_tree(&self) -> Result<EncodedSha, String> {
         let index_path = self.git_dir.join(INDEX_FILE);
         let index = Index::load(&index_path)?;
-        let entries = index.collect_entries();
+        let root = index.get_root();
+        self.write_tree_impl(root)
+    }
+    fn write_tree_impl(&self, node: &TreeNode) -> Result<EncodedSha, String> {
+        let mut tree = Tree::new();
+        for (name, child) in node.get_children() {
+            if child.is_file() {
+                tree.add_entry(ObjectType::Blob, &child.get_sha1().unwrap(), &name);
+            } else {
+                let subdir_tree_sha1 = self.write_tree_impl(child);
+            }
+        }
         todo!()
     }
     fn group_files_by_directory(

@@ -2,11 +2,13 @@ use std::collections::BTreeMap;
 use std::path::{Component, Path};
 use std::fmt;
 
+use crate::EncodedSha;
+
 /// Represents a node in the file tree (either a directory or a file)
 #[derive(Debug, Default)]
-struct TreeNode {
+pub struct TreeNode {
     children: BTreeMap<String, TreeNode>,
-    sha1: Option<String>,
+    sha1: Option<EncodedSha>,
 }
 
 impl TreeNode {
@@ -19,11 +21,26 @@ impl TreeNode {
     }
 
     /// Create a new file node with SHA1
-    fn new_file(sha1: String) -> Self {
+    fn new_file(sha1: EncodedSha) -> Self {
         TreeNode {
             children: BTreeMap::new(),
             sha1: Some(sha1),
         }
+    }
+    pub fn get_children(&self) -> &BTreeMap<String, TreeNode> {
+        &self.children
+    }
+    pub fn is_file(&self) -> bool {
+        match self.sha1 {
+            None => false,
+            Some(_) => true,
+        }
+    }
+    pub fn is_dir(&self) -> bool {
+        !self.is_file()
+    }
+    pub fn get_sha1(&self) -> Option<&EncodedSha> {
+        self.sha1.as_ref()
     }
 }
 
@@ -43,8 +60,12 @@ impl Index {
         }
     }
 
+    pub fn get_root(&self) -> &TreeNode {
+        &self.root
+    }
+
     /// Add/update a file entry with normalized path
-    pub fn update_entry<P: AsRef<Path>>(&mut self, file_path: P, sha1: String) {
+    pub fn update_entry<P: AsRef<Path>>(&mut self, file_path: P, sha1: EncodedSha) {
         let normalized_path = Self::normalize_path(file_path);
         let file_path = Path::new(&normalized_path);
         let components = Self::split_path(file_path);
@@ -70,7 +91,7 @@ impl Index {
     }
 
     /// Remove a file entry by path
-    pub fn remove_entry<P: AsRef<Path>>(&mut self, file_path: P) -> Option<String> {
+    pub fn remove_entry<P: AsRef<Path>>(&mut self, file_path: P) -> Option<EncodedSha> {
         let normalized_path = Self::normalize_path(file_path);
         let file_path = Path::new(&normalized_path);
         let components = Self::split_path(file_path);
@@ -92,7 +113,7 @@ impl Index {
     }
 
     /// Get SHA1 by file path
-    pub fn get_sha1<P: AsRef<Path>>(&self, file_path: P) -> Option<&String> {
+    pub fn get_sha1<P: AsRef<Path>>(&self, file_path: P) -> Option<&EncodedSha> {
         let normalized_path = Self::normalize_path(file_path);
         let file_path = Path::new(&normalized_path);
         let components = Self::split_path(file_path);
@@ -128,7 +149,7 @@ impl Index {
             if parts.len() != 2 {
                 return Err("Invalid index format".into());
             }
-            index.update_entry(parts[0], parts[1].to_string());
+            index.update_entry(parts[0], EncodedSha(parts[1].to_string()));
         }
 
         Ok(index)
@@ -138,7 +159,7 @@ impl Index {
     pub fn save(&self, index_path: &Path) -> Result<(), String> {
         let entries = self.collect_entries();
         let content = entries.into_iter()
-            .map(|(path, sha1)| format!("{} {}", path, sha1))
+            .map(|(path, sha1)| format!("{} {}", path, sha1.0))
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -147,14 +168,14 @@ impl Index {
     }
 
     /// Collect all entries as (path, SHA1) pairs
-    pub fn collect_entries(&self) -> Vec<(String, String)> {
+    pub fn collect_entries(&self) -> Vec<(String, EncodedSha)> {
         let mut entries = Vec::new();
         Self::traverse_tree(&self.root, &mut Vec::new(), &mut entries);
         entries
     }
 
     /// Recursive tree traversal to collect entries
-    fn traverse_tree(node: &TreeNode, path: &mut Vec<String>, entries: &mut Vec<(String, String)>) {
+    fn traverse_tree(node: &TreeNode, path: &mut Vec<String>, entries: &mut Vec<(String, EncodedSha)>) {
         for (name, child) in &node.children {
             path.push(name.clone());
             
@@ -219,7 +240,7 @@ impl fmt::Display for Index {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let entries = self.collect_entries();
         for (path, sha1) in entries {
-            writeln!(f, "{} {}", path, sha1)?;
+            writeln!(f, "{} {}", path, sha1.0)?;
         }
         Ok(())
     }
@@ -233,16 +254,16 @@ mod tests {
         let mut index = Index::new();
         
         // Test adding entries
-        index.update_entry("src/main.rs", "abcd1234".into());
-        index.update_entry("docs/README.md", "efgh5678".into());
+        index.update_entry("src/main.rs", EncodedSha::from_str("abcd1234"));
+        index.update_entry("docs/README.md", EncodedSha::from_str("efgh5678"));
         
         // Test retrieval
-        assert_eq!(index.get_sha1("src/main.rs"), Some(&"abcd1234".into()));
-        assert_eq!(index.get_sha1("docs\\README.md"), Some(&"efgh5678".into())); // Test Windows path
+        assert_eq!(index.get_sha1("src/main.rs"), Some(EncodedSha::from_str("abcd1234")).as_ref());
+        assert_eq!(index.get_sha1("docs\\README.md"), Some(EncodedSha::from_str("efgh5678")).as_ref()); // Test Windows path
 
         // Test update
-        index.update_entry("src/main.rs", "newsha1".into());
-        assert_eq!(index.get_sha1("src/main.rs"), Some(&"newsha1".into()));
+        index.update_entry("src/main.rs", EncodedSha::from_str("newsha1"));
+        assert_eq!(index.get_sha1("src/main.rs"), Some(EncodedSha::from_str("newsha1")).as_ref());
 
         // Test removal
         assert!(index.remove_entry("docs/README.md").is_some());
@@ -254,16 +275,16 @@ mod tests {
         let mut index = Index::new();
         
         // Test different path formats
-        index.update_entry("dir\\subdir/file.txt", "sha".into());
+        index.update_entry("dir\\subdir/file.txt", EncodedSha::from_str("sha"));
         assert_eq!(
             index.get_sha1("dir/subdir/file.txt"), // UNIX path
-            Some(&"sha".into())
+            Some(EncodedSha::from_str("sha")).as_ref()
         );
 
-        index.update_entry("../parent.txt", "sha2".into());
+        index.update_entry("../parent.txt", EncodedSha::from_str("sha2"));
         assert_eq!(
             index.get_sha1("parent.txt"), // Relative components resolved
-            Some(&"sha2".into())
+            Some(EncodedSha::from_str("sha2")).as_ref()
         );
     }
     use tempfile::NamedTempFile;
@@ -286,8 +307,8 @@ mod tests {
         
         let index = Index::load(file.path()).unwrap();
         assert_eq!(index.size, 2);
-        assert_eq!(index.get_sha1("file1.txt"), Some(&"abcde12345".to_string()));
-        assert_eq!(index.get_sha1("subdir/file2.txt"), Some(&"67890fghij".to_string()));
+        assert_eq!(index.get_sha1("file1.txt"), Some(EncodedSha::from_str("abcde12345")).as_ref());
+        assert_eq!(index.get_sha1("subdir/file2.txt"), Some(EncodedSha::from_str("67890fghij")).as_ref());
     }
 
     /// Test loading invalid index format
@@ -305,8 +326,8 @@ mod tests {
     #[test]
     fn test_save_normal_entries() {
         let mut index = Index::new();
-        index.update_entry("a.txt".to_string(), "123".to_string());
-        index.update_entry("b/c.txt".to_string(), "456".to_string());
+        index.update_entry("a.txt".to_string(), EncodedSha::from_str("123"));
+        index.update_entry("b/c.txt".to_string(), EncodedSha::from_str("456"));
 
         let file = NamedTempFile::new().unwrap();
         index.save(file.path()).unwrap();

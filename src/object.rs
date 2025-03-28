@@ -1,16 +1,11 @@
-use std::{
-    collections::BTreeMap,
-    fs::{self, File},
-    io::{Read, Write},
-    path::{Path, PathBuf},
-};
-
-use hex;
-use memchr::memchr;
+use std::{collections::BTreeMap, fs::{self, File}, io::{Read, Write}, path::{Path, PathBuf}};
+use super::EncodedSha;
 use sha1::{Digest, Sha1};
+use memchr::memchr;
+use hex;
 
 // Object type enumeration
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ObjectType {
     Blob,
     Tree,
@@ -46,6 +41,7 @@ pub trait Object {
     fn encoded_sha1(&self) -> String {
         hex::encode(self.sha1())
     }
+
 }
 
 /// Determine object type from byte stream
@@ -53,7 +49,7 @@ pub fn determine_object_type(data: &[u8]) -> Result<ObjectType, String> {
     // Validate header format
     let null_pos = memchr(0, data).ok_or("Data missing null character separator")?;
     let header = &data[..null_pos];
-
+    
     // Parse type field
     let space_pos = memchr(b' ', header).ok_or("Header missing space separator")?;
     let type_part = &header[..space_pos];
@@ -79,25 +75,25 @@ impl Object for Blob {
         // Create header components
         let obj_type = "blob";
         let size = self.data.len().to_string();
-
+        
         // Build the serialized byte sequence
         let mut serialized = Vec::new();
-        serialized.extend(obj_type.as_bytes()); // Add type
-        serialized.push(b' '); // Add space
-        serialized.extend(size.as_bytes()); // Add size
-        serialized.push(0); // Add null byte
-        serialized.extend(&self.data); // Add contents
-
+        serialized.extend(obj_type.as_bytes());  // Add type
+        serialized.push(b' ');                   // Add space
+        serialized.extend(size.as_bytes());      // Add size
+        serialized.push(0);                      // Add null byte
+        serialized.extend(&self.data);            // Add contents
+        
         serialized
     }
 }
 
 impl Blob {
     /// Creates a new Blob from a file path
-    ///
+    /// 
     /// # Arguments
     /// * `path` - Path to a valid file
-    ///
+    /// 
     /// # Returns
     /// - Ok(Blob) containing file data if successful
     /// - Err(String) with error message if:
@@ -106,19 +102,20 @@ impl Blob {
     ///   - File read fails
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Blob, String> {
         let path = path.as_ref();
-
+        
         // Validate path existence
         if !path.exists() {
             return Err(format!("Path does not exist: {}", path.display()));
         }
-
+        
         // Validate path is a file
         if !path.is_file() {
             return Err(format!("Path is not a file: {}", path.display()));
         }
-
+        
         // Read file content
-        let data = fs::read(path).map_err(|e| format!("Failed to read file: {}", e))?;
+        let data = fs::read(path)
+            .map_err(|e| format!("Failed to read file: {}", e))?;
 
         Ok(Blob { data })
     }
@@ -126,8 +123,9 @@ impl Blob {
     /// Returns Blob on success, or String with error description on failure
     pub fn deserialize(data: &[u8]) -> Result<Blob, String> {
         // Find null character separator
-        let null_pos =
-            memchr(0, data).ok_or_else(|| "Missing null separator in blob data".to_string())?;
+        let null_pos = memchr(0, data).ok_or_else(|| 
+            "Missing null separator in blob data".to_string()
+        )?;
 
         // Split header and content
         let (header_bytes, contents_with_null) = data.split_at(null_pos);
@@ -138,21 +136,19 @@ impl Blob {
             .map_err(|e| format!("Invalid UTF-8 in header: {}", e))?;
 
         // Split type and size
-        let (obj_type, size_str) = header
-            .split_once(' ')
+        let (obj_type, size_str) = header.split_once(' ')
             .ok_or_else(|| format!("Malformed header: '{}'", header))?;
 
         // Validate object type
         if obj_type != "blob" {
             return Err(format!(
-                "Invalid object type: expected 'blob', found '{}'",
+                "Invalid object type: expected 'blob', found '{}'", 
                 obj_type
             ));
         }
 
         // Parse content length
-        let size = size_str
-            .parse::<usize>()
+        let size = size_str.parse::<usize>()
             .map_err(|_| format!("Invalid size format: '{}'", size_str))?;
 
         // Validate content length
@@ -165,7 +161,7 @@ impl Blob {
         }
 
         Ok(Blob {
-            data: contents.to_vec(),
+            data: contents.to_vec()
         })
     }
 }
@@ -174,7 +170,7 @@ impl Blob {
 #[derive(Debug)]
 pub struct TreeEntry {
     pub object_type: ObjectType,
-    pub sha1: String,
+    pub sha1: EncodedSha,
     pub name: String,
 }
 impl Tree {
@@ -186,11 +182,16 @@ impl Tree {
     }
 
     /// Add an entry to the tree with automatic sorting
-    pub fn add_entry(&mut self, entry: TreeEntry) {
+    pub fn add_entry(&mut self, object_type: ObjectType, sha1: &EncodedSha, name: &String) {
         // Use BTreeMap to maintain sorted order by filename
-        self.entries.insert(entry.name.clone(), entry);
+        self.entries.insert(name.to_string(), TreeEntry {
+            object_type: object_type.clone(),
+            sha1: sha1.clone(),
+            name: name.clone(),
+        });
     }
 }
+
 
 /// Main tree structure storing sorted entries
 #[derive(Debug)]
@@ -214,7 +215,7 @@ impl Object for Tree {
                 format!(
                     "{} {} {}\n",
                     entry.object_type.to_string(),
-                    entry.sha1,
+                    entry.sha1.0,
                     entry.name
                 )
                 .into_bytes()
@@ -239,7 +240,7 @@ impl ObjectDB {
     }
 
     /// Store object in database
-    pub fn store(&self, obj: &impl Object) -> std::io::Result<String> {
+    pub fn store(&self, obj: &impl Object) -> std::io::Result<EncodedSha> {
         // Generate SHA1 hash
         let encoded_sha = obj.encoded_sha1();
         let (dir_part, file_part) = encoded_sha.split_at(2);
@@ -252,13 +253,13 @@ impl ObjectDB {
         if !obj_path.exists() {
             // Create directory
             fs::create_dir_all(&obj_dir)?;
-
+            
             // Write data
             let mut file = File::create(&obj_path)?;
             file.write_all(&obj.serialize())?;
         }
 
-        Ok(encoded_sha)
+        Ok(EncodedSha(encoded_sha))
     }
 
     /// Retrieve object from database
@@ -267,7 +268,7 @@ impl ObjectDB {
         if encoded_sha.len() != 40 || !encoded_sha.chars().all(|c| c.is_ascii_hexdigit()) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                "Invalid SHA1 hash format",
+                "Invalid SHA1 hash format"
             ));
         }
 
@@ -293,7 +294,7 @@ mod blob_tests {
     fn creates_blob_from_valid_file() {
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(b"test content").unwrap();
-
+        
         let blob = Blob::new(file.path()).unwrap();
         assert_eq!(blob.data, b"test content");
     }
@@ -318,12 +319,12 @@ mod blob_tests {
         #[cfg(unix)] // Test UNIX-style permissions
         {
             use std::os::unix::fs::PermissionsExt;
-
+            
             let file = NamedTempFile::new().unwrap();
             let mut perms = file.as_file().metadata().unwrap().permissions();
             perms.set_mode(0o000); // No permissions
             file.as_file().set_permissions(perms).unwrap();
-
+            
             let result = Blob::new(file.path());
             assert!(result.is_err());
             assert!(result.unwrap_err().contains("Failed to read"));
@@ -339,43 +340,25 @@ mod tree_tests {
         let mut tree = Tree::new();
         let entry1 = TreeEntry {
             object_type: ObjectType::Blob,
-            sha1: "a906cb2a4a904a152e80877d4088654daad0c859".into(),
+            sha1: EncodedSha{0: "a906cb2a4a904a152e80877d4088654daad0c859".to_string()},
             name: "README".into(),
         };
         let entry2 = TreeEntry {
             object_type: ObjectType::Tree,
-            sha1: "99f1a6d12cb4b6f19c8655fca46c3ecf317074e0".into(),
+            sha1: EncodedSha{0:"99f1a6d12cb4b6f19c8655fca46c3ecf317074e0".to_string()},
             name: "lib".into(),
         };
         // Add test entries
-        tree.add_entry(entry1);
-
-        tree.add_entry(entry2);
-        let entry1 = TreeEntry {
-            object_type: ObjectType::Blob,
-            sha1: "a906cb2a4a904a152e80877d4088654daad0c859".into(),
-            name: "README".into(),
-        };
-        let entry2 = TreeEntry {
-            object_type: ObjectType::Tree,
-            sha1: "99f1a6d12cb4b6f19c8655fca46c3ecf317074e0".into(),
-            name: "lib".into(),
-        };
+        tree.add_entry(entry1.object_type.clone(), &entry1.sha1, &entry1.name);
+        
+        tree.add_entry(entry2.object_type.clone(), &entry2.sha1, &entry2.name);
 
         // Verify serialization format
         let data = tree.serialize();
-        let expected_content = format!(
-            "{} {} {}\n{} {} {}\n",
-            entry1.object_type.to_string(),
-            entry1.sha1,
-            entry1.name,
-            entry2.object_type.to_string(),
-            entry2.sha1,
-            entry2.name
-        );
+        let expected_content = format!("{} {} {}\n{} {} {}\n", entry1.object_type.to_string(), entry1.sha1.0, entry1.name, entry2.object_type.to_string(), entry2.sha1.0, entry2.name);
         let expected_header = format!("tree {}\0", expected_content.len());
         println!("{}", std::str::from_utf8(&data).unwrap());
-
+        
         assert!(data.starts_with(expected_header.as_bytes()));
         assert!(data.ends_with(expected_content.as_bytes()));
     }
@@ -402,7 +385,7 @@ mod tests {
 
         // Test object
         let obj = TestObject(b"test data".to_vec());
-        let sha = db.store(&obj).unwrap();
+        let sha = db.store(&obj).unwrap().0;
 
         // Verify path structure
         let stored_path = db.path.join(&sha[..2]).join(&sha[2..]);
@@ -434,7 +417,7 @@ mod tests {
         let sha1 = db.store(&obj).unwrap();
         // Second store
         let sha2 = db.store(&obj).unwrap();
-
+        
         assert_eq!(sha1, sha2);
     }
     #[test]
@@ -454,18 +437,14 @@ mod tests {
 
     #[test]
     fn test_serialize_ascii_content() {
-        let blob = Blob {
-            data: b"hello".to_vec(),
-        };
+        let blob = Blob { data: b"hello".to_vec() };
         let serialized = blob.serialize();
         assert_eq!(serialized, b"blob 5\0hello");
     }
 
     #[test]
     fn test_serialize_binary_content() {
-        let blob = Blob {
-            data: vec![0x00, 0xFF, 0x42],
-        };
+        let blob = Blob { data: vec![0x00, 0xFF, 0x42] };
         let serialized = blob.serialize();
         let expected = b"blob 3\0\x00\xFF\x42".to_vec();
         assert_eq!(serialized, expected);
@@ -474,14 +453,12 @@ mod tests {
     #[test]
     fn test_roundtrip() {
         let original_data = vec![1, 2, 3, 4, 5];
-        let blob = Blob {
-            data: original_data.clone(),
-        };
-
+        let blob = Blob { data: original_data.clone() };
+        
         // Serialize and deserialize
         let serialized = blob.serialize();
         let deserialized = Blob::deserialize(&serialized).unwrap();
-
+        
         assert_eq!(deserialized.data, original_data);
     }
 
@@ -490,7 +467,7 @@ mod tests {
         let data = vec![0u8; 10_000];
         let blob = Blob { data };
         let serialized = blob.serialize();
-
+        
         // Verify header format
         let header_end = serialized.iter().position(|&b| b == 0).unwrap();
         let header = &serialized[..header_end];
