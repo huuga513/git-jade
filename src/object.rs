@@ -54,7 +54,7 @@ pub fn determine_object_type(data: &[u8]) -> Result<ObjectType, String> {
         _ => Err(format!("Unknown object type: {}", type_str)),
     }
 }
-
+#[derive(Debug)]
 pub struct Blob {
     data: Vec<u8>,
 }
@@ -79,6 +79,36 @@ impl Object for Blob {
 }
 
 impl Blob {
+    /// Creates a new Blob from a file path
+    /// 
+    /// # Arguments
+    /// * `path` - Path to a valid file
+    /// 
+    /// # Returns
+    /// - Ok(Blob) containing file data if successful
+    /// - Err(String) with error message if:
+    ///   - Path doesn't exist
+    ///   - Path points to a directory
+    ///   - File read fails
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<Blob, String> {
+        let path = path.as_ref();
+        
+        // Validate path existence
+        if !path.exists() {
+            return Err(format!("Path does not exist: {}", path.display()));
+        }
+        
+        // Validate path is a file
+        if !path.is_file() {
+            return Err(format!("Path is not a file: {}", path.display()));
+        }
+        
+        // Read file content
+        let data = fs::read(path)
+            .map_err(|e| format!("Failed to read file: {}", e))?;
+
+        Ok(Blob { data })
+    }
     /// Deserialize byte stream into Blob object
     /// Returns Blob on success, or String with error description on failure
     pub fn deserialize(data: &[u8]) -> Result<Blob, String> {
@@ -183,6 +213,53 @@ impl ObjectDB {
         file.read_to_end(&mut contents)?;
 
         Ok(contents)
+    }
+}
+
+#[cfg(test)]
+mod blob_tests {
+    use super::*;
+    use tempfile::{NamedTempFile, tempdir};
+
+    #[test]
+    fn creates_blob_from_valid_file() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(b"test content").unwrap();
+        
+        let blob = Blob::new(file.path()).unwrap();
+        assert_eq!(blob.data, b"test content");
+    }
+
+    #[test]
+    fn rejects_missing_file() {
+        let result = Blob::new("non_existent.file");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does not exist"));
+    }
+
+    #[test]
+    fn rejects_directory_path() {
+        let dir = tempdir().unwrap();
+        let result = Blob::new(dir.path());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not a file"));
+    }
+
+    #[test]
+    fn handles_unreadable_file() {
+        #[cfg(unix)] // Test UNIX-style permissions
+        {
+            use std::os::unix::fs::PermissionsExt;
+            
+            let file = NamedTempFile::new().unwrap();
+            let mut perms = file.as_file().metadata().unwrap().permissions();
+            perms.set_mode(0o000); // No permissions
+            file.as_file().set_permissions(perms).unwrap();
+            
+            let result = Blob::new(file.path());
+            assert!(result.is_err());
+            assert!(result.unwrap_err().contains("Failed to read"));
+        }
     }
 }
 #[cfg(test)]
