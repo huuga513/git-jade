@@ -1,3 +1,4 @@
 pub use repo::Repository;
 pub mod repo;
-pub mod object;
+mod object;
+mod index;

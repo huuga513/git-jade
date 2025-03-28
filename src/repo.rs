@@ -44,8 +44,6 @@ impl Repository {
         true
     }
     pub fn init(dir: &Path) -> Result<Repository, &str> {
-        let s = dir.to_str().unwrap();
-        println!("{s}");
         if !dir.exists() {
             return Err("Specified init dir don't exists");
         }
@@ -77,8 +75,22 @@ impl Repository {
         };
         Ok(Repository { dir: dir.to_path_buf(), git_dir: git_dir, work_dir: work_dir, obj_db: obj_db })
     }
-    pub fn open(path: &str) -> Result<Repository, Box<dyn Error>> {
-        todo!("open")
+    /// Open a repository based on the repository dir
+    /// The git dir should be {dir}/{GIT_DIR}
+    pub fn open(dir: &Path) -> Result<Repository, String> {
+        let git_dir = dir.join(GIT_DIR);
+        if !Repository::is_vaild_git_dir(&git_dir) {
+            return Err(format!("{} isn't a vaild git dir", git_dir.to_str().unwrap()));
+        }
+        let work_dir = env::current_dir().map_err(|_| "Failed to get current working dir")?;
+        let objects_dir = git_dir.join(OBJECTS_DIR);
+        let obj_db = match ObjectDB::new(&objects_dir) {
+            Ok(obj_db) => obj_db,
+            Err(_) => {
+                return Err("Failed to create object db".to_string());
+            }
+        };
+        Ok(Repository { dir: dir.to_path_buf(), git_dir: git_dir, work_dir: work_dir, obj_db: obj_db })
     }
 }
 

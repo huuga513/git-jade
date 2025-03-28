@@ -23,6 +23,10 @@ Repository 结构：
 
 `Repository::is_vaild_git_dir(dir)`判断dir指向的文件夹是否是一个完整的.git 文件夹
 
+`Repository::open(dir)`判断dir下是否存在一个完整的 .git 文件夹，然后 dir 为基础创建一个 repository 结构
+
+
+
 ## 对象结构
 ### Object trait
 一个对象文件表示为"{type} {size}\0{contents}"
@@ -80,11 +84,14 @@ index 是 repository 的一个**快照**。它的每个条目代表一个与 rep
 
 初始为空。只有 update-index 可以修改 index 的内容
 
-index 存储的内容是一个个条目：
+index 存储的内容是一个个条目（entry）（以有序map实现）：
 
 条目：文件相对 repository 的**相对路径** 文件对应的 blob 的sha1
 
-条目中不含子文件夹，只含文件。以'/'作为路径分隔符。
+条目中不含子文件夹名，只含文件名。以'/'作为路径分隔符。
+
+接口：
+增删查改条目
 
 update-index(files) 命令指定了index需要与 repository 同步的文件。
 
