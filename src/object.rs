@@ -229,6 +229,229 @@ impl Object for Tree {
         data
     }
 }
+
+use chrono::{DateTime, FixedOffset, Utc};
+use std::fmt::{Display, Formatter};
+
+/// Structure for commit author/committer information
+#[derive(Debug, Clone)]
+pub struct Author {
+    name: String,
+    email: String,
+    timestamp: DateTime<FixedOffset>, // Timestamp with timezone
+}
+
+impl Author {
+    pub fn new(name: &str, email: &str, timestamp: DateTime<FixedOffset>) -> Self {
+        Self {
+            name: name.to_string(),
+            email: email.to_string(),
+            timestamp,
+        }
+    }
+}
+
+impl Display for Author {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        // Example format: Alice <alice@example.com> 1627987956 +0800
+        write!(
+            f,
+            "{} <{}> {}",
+            self.name,
+            self.email,
+            self.timestamp.format("%s %z")
+        )
+    }
+}
+
+/// Git commit object structure
+#[derive(Debug)]
+pub struct Commit {
+    tree_sha: String,      // SHA1 of the top-level tree object
+    parents: Vec<String>,  // List of parent commit SHA1s
+    author: Author,        // Author information
+    committer: Author,     // Committer information
+    message: String,       // Commit message
+}
+
+impl Commit {
+    pub fn new(
+        tree_sha: &str,
+        parents: Vec<String>,
+        author: Author,
+        committer: Author,
+        message: &str,
+    ) -> Self {
+        Self {
+            tree_sha: tree_sha.to_string(),
+            parents,
+            author,
+            committer,
+            message: message.to_string(),
+        }
+    }
+}
+
+impl Display for Commit {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        // Build commit content
+        writeln!(f, "tree {}", self.tree_sha)?;
+
+        // Write parent commits (if any)
+        for parent in &self.parents {
+            writeln!(f, "parent {}", parent)?;
+        }
+
+        // Write author and committer information
+        writeln!(f, "author {}", self.author)?;
+        writeln!(f, "committer {}", self.committer)?;
+
+        // Empty line to separate header and message
+        writeln!(f)?;
+
+        // Write commit message (preserving original line breaks)
+        write!(f, "{}", self.message)
+    }
+}
+impl Object for Commit {
+    /// Serialize commit object following Git's object format:
+    /// "commit {content_length}\0{header}{message}"
+    fn serialize(&self) -> Vec<u8> {
+        // Convert to string representation first
+        let content = self.to_string();
+        // Format header: "commit {content_length}\0"
+        let header = format!("commit {}\0", content.len());
+        
+        // Combine header and content
+        let mut bytes = Vec::with_capacity(header.len() + content.len());
+        bytes.extend_from_slice(header.as_bytes());
+        bytes.extend_from_slice(content.as_bytes());
+        bytes
+    }
+}
+
+impl Commit {
+    /// Deserialize raw object data into a Commit instance
+    /// 
+    /// # Format
+    /// Expects data in "commit {size}\0{content}" format where content contains:
+    /// - tree SHA
+    /// - optional parent SHAs
+    /// - author/committer lines
+    /// - empty line
+    /// - commit message
+    pub fn deserialize(data: &[u8]) -> Result<Self, String> {
+        // Split header and content at null byte
+        let null_pos = data.iter().position(|&b| b == b'\0')
+            .ok_or("Missing null byte separator")?;
+        let (header, content) = data.split_at(null_pos);
+        let content = &content[1..]; // Skip null byte
+
+        // Parse header: "commit {size}"
+        let header_str = std::str::from_utf8(header).map_err(|e| e.to_string())?;
+        let (obj_type, obj_size) = parse_header(header_str)?;
+
+        // Validate object type
+        if obj_type != "commit" {
+            return Err(format!("Expected commit object, got {}", obj_type));
+        }
+
+        // Verify content length matches header size
+        if content.len() != obj_size {
+            return Err(format!("Size mismatch: header {} vs actual {}", 
+                obj_size, content.len()));
+        }
+
+        // Parse commit content
+        parse_commit_content(content)
+    }
+}
+
+/// Helper to parse object header
+fn parse_header(header: &str) -> Result<(&str, usize), String> {
+    let mut parts = header.splitn(2, ' ');
+    let obj_type = parts.next().ok_or("Missing object type")?;
+    let obj_size = parts.next()
+        .ok_or("Missing object size")?
+        .parse::<usize>()
+        .map_err(|e| e.to_string())?;
+    Ok((obj_type, obj_size))
+}
+
+/// Helper to parse commit content
+fn parse_commit_content(content: &[u8]) -> Result<Commit, String> {
+    let content_str = std::str::from_utf8(content).map_err(|e| e.to_string())?;
+    let mut lines = content_str.lines();
+    
+    let mut tree_sha = None;
+    let mut parents = Vec::new();
+    let mut author = None;
+    let mut committer = None;
+    let mut message = String::new();
+    let mut in_message = false;
+
+    // Parse header lines
+    while let Some(line) = lines.next() {
+        if line.is_empty() {
+            in_message = true;
+            continue;
+        }
+
+        if in_message {
+            message.push_str(line);
+            message.push('\n');
+            continue;
+        }
+
+        if let Some(sha) = line.strip_prefix("tree ") {
+            tree_sha = Some(sha.to_string());
+        } else if let Some(parent_sha) = line.strip_prefix("parent ") {
+            parents.push(parent_sha.to_string());
+        } else if let Some(auth_info) = line.strip_prefix("author ") {
+            author = Some(parse_author(auth_info)?);
+        } else if let Some(committer_info) = line.strip_prefix("committer ") {
+            committer = Some(parse_author(committer_info)?);
+        } else {
+            return Err(format!("Unexpected line: {}", line));
+        }
+    }
+
+    // Validate required fields
+    let tree_sha = tree_sha.ok_or("Missing tree SHA")?;
+    let author = author.ok_or("Missing author")?;
+    let committer = committer.ok_or("Missing committer")?;
+
+    // Remove trailing newline from message
+    let message = message.trim_end().to_string();
+
+    Ok(Commit {
+        tree_sha,
+        parents,
+        author,
+        committer,
+        message,
+    })
+}
+
+/// Parse author/committer line format: "Name <email> timestamp timezone"
+fn parse_author(s: &str) -> Result<Author, String> {
+    let mut parts = s.rsplitn(3, ' ');
+    let tz = parts.next().ok_or("Missing timezone")?;
+    let timestamp = parts.next().ok_or("Missing timestamp")?;
+    let rest = parts.next().ok_or("Missing name/email")?;
+
+    // Parse timestamp with timezone
+    let full_ts = format!("{} {}", timestamp, tz);
+    let dt = DateTime::parse_from_str(&full_ts, "%s %z")
+        .map_err(|e| e.to_string())?;
+
+    // Parse name and email
+    let (name, email) = rest.split_once(" <")
+        .and_then(|(name, rest)| rest.strip_suffix('>').map(|email| (name, email)))
+        .ok_or("Malformed author/committer line")?;
+
+    Ok(Author::new(name, email, dt))
+}
 impl ObjectDB {
     /// Create new object database
     pub fn new(path: &Path) -> Result<ObjectDB, &str> {
@@ -472,5 +695,80 @@ mod tests {
         let header_end = serialized.iter().position(|&b| b == 0).unwrap();
         let header = &serialized[..header_end];
         assert_eq!(header, b"blob 10000");
+    }
+}
+
+#[cfg(test)]
+mod commit_tests {
+    use super::*;
+    use chrono::TimeZone;
+    fn create_sample_author() -> Author {
+        let timestamp = FixedOffset::east_opt(8 * 3600)
+            .unwrap()
+            .with_ymd_and_hms(2023, 7, 20, 10, 30, 0)
+            .unwrap();
+        
+        Author::new("Alice", "alice@example.com", timestamp)
+    }
+
+    #[test]
+    fn test_initial_commit() {
+        let author = create_sample_author();
+        let commit = Commit::new(
+            "b45ef6fec89518d314f546fd3b302bf7a11b0d18",
+            vec![],
+            author.clone(),
+            author,
+            "Initial commit",
+        );
+
+        let expected = r#"tree b45ef6fec89518d314f546fd3b302bf7a11b0d18
+author Alice <alice@example.com> 1689820200 +0800
+committer Alice <alice@example.com> 1689820200 +0800
+
+Initial commit"#;
+
+        assert_eq!(commit.to_string(), expected);
+    }
+
+    #[test]
+    fn test_commit_with_parents() {
+        let author = create_sample_author();
+        let commit = Commit::new(
+            "d4b8e6d7f7c1b7e0e6a4b8e6d7f7c1b7e0e6a4b8",
+            vec![
+                "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3".to_string(),
+                "b45ef6fec89518d314f546fd3b302bf7a11b0d18".to_string(),
+            ],
+            author.clone(),
+            author,
+            "Merge branch 'feature'\n\nAdd new functionality",
+        );
+
+        let expected = r#"tree d4b8e6d7f7c1b7e0e6a4b8e6d7f7c1b7e0e6a4b8
+parent a94a8fe5ccb19ba61c4c0873d391e987982fbbd3
+parent b45ef6fec89518d314f546fd3b302bf7a11b0d18
+author Alice <alice@example.com> 1689820200 +0800
+committer Alice <alice@example.com> 1689820200 +0800
+
+Merge branch 'feature'
+
+Add new functionality"#;
+
+        assert_eq!(commit.to_string(), expected);
+    }
+
+    #[test]
+    fn test_author_formatting() {
+        let timestamp = FixedOffset::east_opt(-5 * 3600)
+            .unwrap()
+            .with_ymd_and_hms(2023, 7, 20, 10, 30, 0)
+            .unwrap();
+        
+        let author = Author::new("Bob", "bob@company.com", timestamp);
+        assert_eq!(
+            author.to_string(),
+            "Bob <bob@company.com> 1689867000 -0500"
+        );
     }
 }
