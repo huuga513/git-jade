@@ -1,6 +1,7 @@
 use super::index::Index;
-use super::object::{Blob, ObjectDB};
+use super::object::{Blob, ObjectDB, ObjectType, Tree, TreeEntry};
 use core::error;
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::format;
 use std::path::{Path, PathBuf};
@@ -198,6 +199,39 @@ impl Repository {
         }
         index.save(&index_path)?;
         Ok(())
+    }
+    /// Convert index to tree objects and store them, returning root tree's SHA1
+    pub fn write_tree(&self) -> Result<String, String> {
+        let index_path = self.git_dir.join(INDEX_FILE);
+        let index = Index::load(&index_path)?;
+        let entries = index.collect_entries();
+        todo!()
+    }
+    fn group_files_by_directory(
+        file_paths: &[(&String, &String)],
+    ) -> HashMap<String, Vec<(String, String)>> {
+        let mut dir_map: HashMap<String, Vec<(String, String)>> = HashMap::new();
+
+        for &path in file_paths {
+            let p = path::Path::new(path.0);
+            let sha = path.1;
+
+            // get parent dir (repository dir is repersented by '.')
+            let parent = p.parent().unwrap_or_else(|| path::Path::new("."));
+
+            let parent_str = parent.to_str().unwrap();
+            // get filename
+            if let Some(file_name) = p.file_name() {
+                if let Some(name) = file_name.to_str() {
+                    dir_map
+                        .entry(parent_str.to_string())
+                        .or_insert_with(Vec::new)
+                        .push((name.to_string(), sha.to_string()));
+                }
+            }
+        }
+
+        dir_map
     }
 }
 
