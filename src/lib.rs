@@ -20,6 +20,9 @@ impl FromStr for EncodedSha {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.len() != 40 {
+            return Err(())
+        }
         Ok(EncodedSha(s.to_string()))
     }
 }

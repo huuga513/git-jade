@@ -282,6 +282,7 @@ impl Repository {
     }
 }
 
+#[derive(Debug)]
 struct Branch {
     name: String,
     commit_sha: EncodedSha,
@@ -303,7 +304,7 @@ impl Branch {
         let file_path = base_path.join(name);
         let content = fs::read_to_string(file_path)?;
         let commit_str = content.trim();
-        let commit = EncodedSha::from_str(commit_str).unwrap();
+        let commit = EncodedSha::from_str(commit_str).map_err(|_| io::ErrorKind::InvalidData)?;
         Ok(Self {
             name: name.to_string(),
             commit_sha: commit,
@@ -510,5 +511,90 @@ mod function_tests {
         assert!(content.contains("tree b45ef6fec89518d314f546fd3b302bf7a11b0d18\n"));
         assert!(content.contains("author Charlie <charlie@test.org>"));
         assert!(content.contains("\n\nTest commit"));
+    }
+}
+#[cfg(test)]
+mod branch_tests {
+    use super::*;
+    use tempfile::TempDir;
+    use std::io;
+
+    #[test]
+    fn test_save_and_load_branch() {
+        // Create a temporary directory
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path();
+
+        // Construct a test branch
+        let branch = Branch {
+            name: "test-branch".to_string(),
+            commit_sha: EncodedSha("a".repeat(40)),
+        };
+
+        // Test saving the branch
+        branch.save(base_path).unwrap();
+
+        // Verify the file exists and its content is correct
+        let file_path = base_path.join("test-branch");
+        assert!(file_path.exists());
+        assert_eq!(
+            fs::read_to_string(file_path).unwrap().trim(),
+            "a".repeat(40)
+        );
+
+        // Test loading the branch
+        let loaded_branch = Branch::load(base_path, "test-branch").unwrap();
+        assert_eq!(loaded_branch.name, "test-branch");
+        assert_eq!(loaded_branch.commit_sha.to_string(), "a".repeat(40));
+    }
+
+    #[test]
+    fn test_save_creates_parent_directories() {
+        // Test the automatic directory creation logic
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path().join("sub/dir");
+
+        let branch = Branch {
+            name: "deep-branch".to_string(),
+            commit_sha: EncodedSha("b".repeat(40)),
+        };
+
+        // Save to a multi-level directory
+        branch.save(&base_path).unwrap();
+
+        // Verify the file path
+        let file_path = base_path.join("deep-branch");
+        assert!(file_path.exists());
+    }
+
+    #[test]
+    fn test_load_nonexistent_file() {
+        // Test loading a non-existent branch
+        let temp_dir = TempDir::new().unwrap();
+        let result = Branch::load(temp_dir.path(), "ghost-branch");
+        
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
+    }
+
+    #[test]
+    fn test_load_invalid_commit_hash() {
+        // Test loading an invalid hash value
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("invalid-branch");
+        
+        // Write invalid content
+        fs::write(&file_path, "short-hash").unwrap();
+
+        let result = Branch::load(temp_dir.path(), "invalid-branch");
+        
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
     }
 }
