@@ -310,6 +310,17 @@ impl Branch {
             commit_sha: commit,
         })
     }
+    /// Removes the branch file from the specified base directory.
+    /// 
+    /// # Arguments
+    /// * `base_path` - The directory containing branch files
+    /// 
+    /// # Returns
+    /// * `io::Result<()>` - Success if file is deleted, error if deletion fails
+    pub fn remove(base_path: &Path, name: &str) -> io::Result<()> {
+        let file_path = base_path.join(&name);
+        fs::remove_file(file_path)
+    }
 }
 
 enum Head {
@@ -638,6 +649,63 @@ mod branch_tests {
             result.unwrap_err().kind(),
             io::ErrorKind::InvalidData
         );
+    }
+    #[test]
+    fn test_remove_existing_branch() -> io::Result<()> {
+        let temp_dir = TempDir::new()?;
+        let base_path = temp_dir.path();
+        let branch_name = "existing-branch";
+
+        // Create a test branch file
+        let file_path = base_path.join(branch_name);
+        fs::write(&file_path, "a".repeat(40))?;
+
+        // Remove the branch
+        Branch::remove(base_path, branch_name)?;
+
+        // Verify file deletion
+        assert!(!file_path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn test_remove_nonexistent_branch() {
+        let temp_dir = TempDir::new().unwrap();
+        let result = Branch::remove(temp_dir.path(), "ghost-branch");
+        
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn test_remove_with_invalid_name() {
+        let temp_dir = TempDir::new().unwrap();
+        
+        // Test empty branch name
+        let result = Branch::remove(temp_dir.path(), "");
+        assert!(result.is_err());
+        
+        // Test name with invalid characters
+        let result = Branch::remove(temp_dir.path(), "invalid/name@");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_remove_in_subdirectory() -> io::Result<()> {
+        let temp_dir = TempDir::new()?;
+        let base_path = temp_dir.path().join("refs/heads");
+        let branch_name = "feature-branch";
+
+        // Create nested branch file
+        fs::create_dir_all(&base_path)?;
+        fs::write(base_path.join(branch_name), "b".repeat(40))?;
+
+        // Remove the branch
+        Branch::remove(&base_path, branch_name)?;
+
+        // Verify parent directory still exists
+        assert!(base_path.exists());
+        Ok(())
     }
 }
 #[cfg(test)]
