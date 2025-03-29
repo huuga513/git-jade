@@ -312,6 +312,48 @@ impl Branch {
     }
 }
 
+enum Head {
+    /// Symbolic reference, e.g., refs/heads/master
+    Symbolic(PathBuf),
+    /// Detached HEAD state, directly pointing to a commit
+    Detached(EncodedSha),
+}
+
+impl Head {
+    /// Saves the HEAD to the specified path
+    pub fn save(&self, path: &Path) -> io::Result<()> {
+        // Ensure parent directories exist
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        
+        // Generate content based on state
+        let content = match self {
+            Head::Symbolic(ref_path) => format!("ref: {}", ref_path.display()),
+            Head::Detached(sha) => sha.0.clone(),
+        };
+        
+        fs::write(path, content)
+    }
+
+    /// Loads HEAD from the specified path
+    pub fn load(path: &Path) -> io::Result<Self> {
+        let content = fs::read_to_string(path)?;
+        let content = content.trim();
+
+        // Parse symbolic reference
+        if let Some(stripped) = content.strip_prefix("ref: ") {
+            Ok(Head::Symbolic(PathBuf::from(stripped)))
+        } 
+        // Parse detached HEAD state
+        else {
+            Ok(EncodedSha::from_str(content)
+                .map(Head::Detached)
+                .map_err(|_| io::ErrorKind::InvalidData)?)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -596,5 +638,63 @@ mod branch_tests {
             result.unwrap_err().kind(),
             io::ErrorKind::InvalidData
         );
+    }
+}
+#[cfg(test)]
+mod head_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_symbolic_head() {
+        let temp_dir = TempDir::new().unwrap();
+        let head_path = temp_dir.path().join("HEAD");
+
+        // Test saving symbolic reference
+        let head = Head::Symbolic(PathBuf::from("refs/heads/master"));
+        head.save(&head_path).unwrap();
+
+        // Verify file content
+        assert_eq!(
+            fs::read_to_string(&head_path).unwrap().trim(),
+            "ref: refs/heads/master"
+        );
+
+        // Test loading
+        let loaded = Head::load(&head_path).unwrap();
+        assert!(matches!(loaded, Head::Symbolic(p) if p == PathBuf::from("refs/heads/master")));
+    }
+
+    #[test]
+    fn test_detached_head() {
+        let temp_dir = TempDir::new().unwrap();
+        let head_path = temp_dir.path().join("HEAD");
+
+        // Test saving detached HEAD state
+        let sha = EncodedSha("a".repeat(40));
+        let head = Head::Detached(sha);
+        head.save(&head_path).unwrap();
+
+        // Verify file content
+        assert_eq!(
+            fs::read_to_string(&head_path).unwrap().trim(),
+            "a".repeat(40)
+        );
+
+        // Test loading
+        let loaded = Head::load(&head_path).unwrap();
+        assert!(matches!(loaded, Head::Detached(_)));
+    }
+
+    #[test]
+    fn test_invalid_head() {
+        let temp_dir = TempDir::new().unwrap();
+        let head_path = temp_dir.path().join("HEAD");
+
+        // Write invalid content
+        fs::write(&head_path, "invalid_commit_hash").unwrap();
+        
+        let result = Head::load(&head_path);
+        assert!(matches!(result, Err(e) if e.kind() == io::ErrorKind::InvalidData));
     }
 }
