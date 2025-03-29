@@ -592,6 +592,8 @@ mod tree_tests {
 }
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
     use tempfile::TempDir;
 
@@ -630,9 +632,9 @@ mod tests {
         let db = ObjectDB::new(temp_dir.path()).unwrap();
 
         // Short hash
-        assert!(db.retrieve(&EncodedSha::from_str("abcd")).is_err());
+        assert!(db.retrieve(&EncodedSha::from_str("abcd").unwrap()).is_err());
         // Invalid characters
-        assert!(db.retrieve(&EncodedSha::from_str("z".repeat(40).as_str())).is_err());
+        assert!(db.retrieve(&EncodedSha::from_str("z".repeat(40).as_str()).unwrap()).is_err());
     }
 
     #[test]

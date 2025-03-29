@@ -9,7 +9,8 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::format;
 use std::path::{Path, PathBuf};
-use std::{env, fs, path};
+use std::str::FromStr;
+use std::{env, fs, io, path};
 use super::EncodedSha;
 const OBJECTS_DIR: &str = "objects";
 const REFS_DIR: &str = "refs";
@@ -248,7 +249,7 @@ impl Repository {
     /// 
     /// # Returns
     /// SHA1 hash of the created commit object
-    pub fn commit_tree(
+    fn commit_tree(
         &self,
         tree_sha: &str,
         parents: Vec<String>,
@@ -278,6 +279,35 @@ impl Repository {
         Ok(self.obj_db
             .store(&commit)
             .map_err(|e| e.to_string())?)
+    }
+}
+
+struct Branch {
+    name: String,
+    commit_sha: EncodedSha,
+}
+
+impl Branch {
+    /// save branch to base_path/\<branch name\>
+    /// e.g: refs/heads/master
+    pub fn save(&self, base_path: &Path) -> io::Result<()> {
+        let file_path = base_path.join(&self.name);
+        if let Some(parent) = file_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(file_path, self.commit_sha.to_string())
+    }
+
+    /// load branch from base_path/name
+    pub fn load(base_path: &Path, name: &str) -> io::Result<Self> {
+        let file_path = base_path.join(name);
+        let content = fs::read_to_string(file_path)?;
+        let commit_str = content.trim();
+        let commit = EncodedSha::from_str(commit_str).unwrap();
+        Ok(Self {
+            name: name.to_string(),
+            commit_sha: commit,
+        })
     }
 }
 
@@ -476,8 +506,6 @@ mod function_tests {
         let raw_commit = repo.obj_db.retrieve(&sha).unwrap();
         let content = String::from_utf8(raw_commit).unwrap();
 
-        println!("{}",content);
-        
         assert!(content.starts_with("commit "));
         assert!(content.contains("tree b45ef6fec89518d314f546fd3b302bf7a11b0d18\n"));
         assert!(content.contains("author Charlie <charlie@test.org>"));

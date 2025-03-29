@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 pub use repo::Repository;
 pub mod repo;
 mod object;
@@ -8,12 +10,22 @@ impl EncodedSha {
     fn from_string(string: String) -> EncodedSha {
         EncodedSha(string)
     }
-    fn from_str(str: &str) -> EncodedSha {
-        EncodedSha(str.to_string())
-    }
 }
 impl AsRef<EncodedSha> for EncodedSha {
     fn as_ref(&self) -> &EncodedSha {
         &self
+    }
+}
+impl FromStr for EncodedSha {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(EncodedSha(s.to_string()))
+    }
+}
+
+impl ToString for EncodedSha {
+    fn to_string(&self) -> String {
+        self.0.clone()
     }
 }

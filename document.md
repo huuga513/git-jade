@@ -107,8 +107,19 @@ write-tree 命令可以将 index 转储为一组 tree 对象，创建并存储�
 
 write-tree 在内部使用递归实现。即指定一个前缀（prefix），代表写入表示子目录 \<prefix\> 的树对象。如果write tree 写入的子目录内不存在其他子目录，则创建一个 tree 对象并返回其 sha1。否则，递归将子目录转储成一组 tree 对象。
 
-## HEAD
+## branch
+branch 存储在 `.git/refs/heads` 文件夹下。文件名为 branch 名，文件内容是以字符串表示的 branch 引用的 commit 对象的哈希值。
 
+如 文件名：`add-comments`，内容:`5cb4608b594abb69cfc8cddd0010ff6891099be2`，表示这是一个 branch，名字为 `add-comments`，引用 `5cb46`的 commit
+
+branch 并不属于 git object，所以其自身提供了 save 和 load 方法，给定 path 用于保存和加载自身。
+
+## HEAD
+HEAD 可以存在于 `.git` 下或者 `.git/refs/remotes/<remote name>`下。
+
+HEAD 保存一个 branch 文件相对 git dir 的相对路径。文件名为：`HEAD`，内容示例：`ref: refs/heads/add-comments`
+
+HEAD 不属于 git object，所以其自身提供了 save 和 load 方法，给定 path 用于保存和加载自身。
 ## refs
 
 ## remote
