@@ -68,7 +68,7 @@ write-tree: 将当前的index内容创建并同步到一组 tree 文件中
 
 提交对象的格式很简单：它先指定一个顶层树对象，代表当前项目快照； 然后是可能存在的父提交（前面描述的提交对象并不存在任何父提交）； 之后是作者/提交者信息（依据你的 user.name 和 user.email 配置来设定，外加一个时间戳）； 留空一行，最后是提交注释。
 
-1. commit-tree 指定一个 tree 对象的 sha1 和 可能存在的 父亲 提交，创建一个 commit 对象
+1. commit-tree 指定一个 tree 对象的 sha1 和 可能存在的 父亲 提交，创建一个 commit 对象并存储入对象数据库，返回此 commit 对象的 sha1
 ## ObjectDB 对象数据库操作
 给定一个 path，可以基于这个 path 创建一个 ObjectDB 结构
 

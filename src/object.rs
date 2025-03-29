@@ -290,6 +290,9 @@ impl Commit {
             message: message.to_string(),
         }
     }
+    pub fn get_parents(&self) -> &Vec<String> {
+        &self.parents
+    }
 }
 
 impl Display for Commit {
@@ -486,8 +489,9 @@ impl ObjectDB {
     }
 
     /// Retrieve object from database
-    pub fn retrieve(&self, encoded_sha: &str) -> std::io::Result<Vec<u8>> {
+    pub fn retrieve<E: AsRef<EncodedSha>>(&self, encoded_sha: E) -> std::io::Result<Vec<u8>> {
         // Validate SHA format
+        let encoded_sha = &encoded_sha.as_ref().0;
         if encoded_sha.len() != 40 || !encoded_sha.chars().all(|c| c.is_ascii_hexdigit()) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -608,14 +612,15 @@ mod tests {
 
         // Test object
         let obj = TestObject(b"test data".to_vec());
-        let sha = db.store(&obj).unwrap().0;
+        let sha = db.store(&obj).unwrap();
+        let sha_ref = &sha;
 
         // Verify path structure
-        let stored_path = db.path.join(&sha[..2]).join(&sha[2..]);
+        let stored_path = db.path.join(&sha.0[..2]).join(&sha.0[2..]);
         assert!(stored_path.exists());
 
         // Read and verify
-        let retrieved = db.retrieve(&sha).unwrap();
+        let retrieved = db.retrieve(sha_ref).unwrap();
         assert_eq!(retrieved, obj.serialize());
     }
 
@@ -625,9 +630,9 @@ mod tests {
         let db = ObjectDB::new(temp_dir.path()).unwrap();
 
         // Short hash
-        assert!(db.retrieve("abcd").is_err());
+        assert!(db.retrieve(&EncodedSha::from_str("abcd")).is_err());
         // Invalid characters
-        assert!(db.retrieve("z".repeat(40).as_str()).is_err());
+        assert!(db.retrieve(&EncodedSha::from_str("z".repeat(40).as_str())).is_err());
     }
 
     #[test]

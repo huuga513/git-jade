@@ -1,3 +1,7 @@
+use chrono::{FixedOffset, Utc};
+
+use crate::object::{Author, Commit};
+
 use super::index::{Index, TreeNode};
 use super::object::{Blob, ObjectDB, ObjectType, Tree};
 use core::error;
@@ -232,6 +236,49 @@ impl Repository {
         let sha = self.obj_db.store(&tree).map_err(|why|why.to_string())?;
         Ok(sha)
     }
+    /// Creates a commit object from a tree SHA and parent commits,
+    /// then stores it in the object database.
+    /// 
+    /// # Arguments
+    /// * `tree_sha` - SHA1 hash of the tree object representing the snapshot
+    /// * `parents` - List of parent commit SHA1s (empty for initial commit)
+    /// * `message` - Commit message
+    /// * `author_name` - Config user.name for author
+    /// * `author_email` - Config user.email for author
+    /// 
+    /// # Returns
+    /// SHA1 hash of the created commit object
+    pub fn commit_tree(
+        &self,
+        tree_sha: &str,
+        parents: Vec<String>,
+        message: &str,
+        author_name: &str,
+        author_email: &str,
+    ) -> Result<EncodedSha, String> {
+        // Generate timestamp with current time and local offset
+        let now = Utc::now();
+        let offset = FixedOffset::east_opt(8 * 3600).unwrap(); // Use actual local offset
+        let timestamp = now.with_timezone(&offset);
+
+        // Create author/committer (usually same unless amended)
+        let author = Author::new(author_name, author_email, timestamp);
+        let committer = author.clone();
+
+        // Build commit object
+        let commit = Commit::new(
+            tree_sha,
+            parents,
+            author,
+            committer,
+            message,
+        );
+
+        // Store in object database and return SHA1
+        Ok(self.obj_db
+            .store(&commit)
+            .map_err(|e| e.to_string())?)
+    }
 }
 
 #[cfg(test)]
@@ -352,5 +399,88 @@ mod tests {
         let result = repo.update_index(&dir_path);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("isn't a file"));
+    }
+}
+
+#[cfg(test)]
+mod function_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn create_test_repo() -> Repository {
+        let dir = tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        repo
+    }
+
+    #[test]
+    fn create_initial_commit() {
+        let repo = create_test_repo();
+        let tree_sha = "b45ef6fec89518d314f546fd3b302bf7a11b0d18";
+        
+        let result = repo.commit_tree(
+            tree_sha,
+            vec![],
+            "Initial commit",
+            "Alice",
+            "alice@example.com",
+        );
+
+        assert!(result.is_ok());
+        let commit_sha = result.unwrap();
+        
+        // Verify commit exists in object database
+        assert!(repo.obj_db.retrieve(&commit_sha).is_ok());
+    }
+
+    #[test]
+    fn create_merge_commit() {
+        let repo = create_test_repo();
+        let tree_sha = "d4b8e6d7f7c1b7e0e6a4b8e6d7f7c1b7e0e6a4b8";
+        let parents = vec![
+            "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3".to_string(),
+            "b45ef6fec89518d314f546fd3b302bf7a11b0d18".to_string(),
+        ];
+
+        let result = repo.commit_tree(
+            tree_sha,
+            parents.clone(),
+            "Merge branch 'feature'",
+            "Bob",
+            "bob@company.com",
+        );
+
+        assert!(result.is_ok());
+        let commit_sha = result.unwrap();
+        
+        // Verify parent relationships
+        let commit_data = repo.obj_db.retrieve(&commit_sha).unwrap();
+        let commit = Commit::deserialize(&commit_data).unwrap();
+        assert_eq!(*commit.get_parents(), parents);
+    }
+
+    #[test]
+    fn commit_structure_validation() {
+        let repo = create_test_repo();
+        let tree_sha = "b45ef6fec89518d314f546fd3b302bf7a11b0d18";
+        
+        let sha = repo.commit_tree(
+            tree_sha,
+            vec![],
+            "Test commit",
+            "Charlie",
+            "charlie@test.org",
+        ).unwrap();
+
+        // Raw commit content verification
+        let raw_commit = repo.obj_db.retrieve(&sha).unwrap();
+        let content = String::from_utf8(raw_commit).unwrap();
+
+        println!("{}",content);
+        
+        assert!(content.starts_with("commit "));
+        assert!(content.contains("tree b45ef6fec89518d314f546fd3b302bf7a11b0d18\n"));
+        assert!(content.contains("author Charlie <charlie@test.org>"));
+        assert!(content.contains("\n\nTest commit"));
     }
 }

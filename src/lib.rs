@@ -12,3 +12,8 @@ impl EncodedSha {
         EncodedSha(str.to_string())
     }
 }
+impl AsRef<EncodedSha> for EncodedSha {
+    fn as_ref(&self) -> &EncodedSha {
+        &self
+    }
+}
