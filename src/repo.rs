@@ -281,9 +281,14 @@ impl Repository {
         Ok(self.obj_db.store(&commit).map_err(|e| e.to_string())?)
     }
 
-    fn get_current_commit(&self) -> EncodedSha {
+    fn get_head(&self) -> Option<Head> {
         let head_path = self.git_dir.join(HEAD_FILE);
-        let head = Head::load(&head_path).unwrap();
+        let head = Head::load(&head_path).ok();
+        head
+    }
+
+    fn get_current_commit(&self) -> EncodedSha {
+        let head = self.get_head().unwrap();
         match head {
             Head::Symbolic(path_buf) => {
                 let branch_path = self.git_dir.join(path_buf);
@@ -312,6 +317,21 @@ impl Repository {
             commit_sha: current_commit,
         };
         branch.save(&branch_dir).unwrap();
+    }
+
+    fn rm_branch<S: AsRef<String>>(&self, name: S) {
+        let head = self.get_head().unwrap();
+        match head {
+            Head::Symbolic(path_buf) => {
+                if path_buf.file_name().unwrap().to_str().unwrap() == name.as_ref() {
+                    println!("A branch with that name already exists.");
+                    std::process::exit(0);
+                }
+            },
+            Head::Detached(_) => (),
+        }
+        let branch_dir = self.git_dir.join(REFS_DIR).join(HEADS_DIR);
+        Branch::remove(&branch_dir, name.as_ref()).unwrap()
     }
 }
 
