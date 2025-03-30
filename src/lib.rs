@@ -1,9 +1,9 @@
 use std::{path::Display, str::FromStr};
 
 pub use repo::Repository;
-pub mod repo;
-mod object;
 mod index;
+mod object;
+pub mod repo;
 #[derive(Debug, Clone, PartialEq)]
 struct EncodedSha(String);
 impl EncodedSha {
@@ -21,7 +21,7 @@ impl FromStr for EncodedSha {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.len() != 40 {
-            return Err(())
+            return Err(());
         }
         Ok(EncodedSha(s.to_string()))
     }

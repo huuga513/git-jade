@@ -1,8 +1,13 @@
-use std::{collections::BTreeMap, fs::{self, File}, io::{Read, Write}, path::{Path, PathBuf}};
 use super::EncodedSha;
-use sha1::{Digest, Sha1};
-use memchr::memchr;
 use hex;
+use memchr::memchr;
+use sha1::{Digest, Sha1};
+use std::{
+    collections::BTreeMap,
+    fs::{self, File},
+    io::{Read, Write},
+    path::{Path, PathBuf},
+};
 
 // Object type enumeration
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -41,7 +46,6 @@ pub trait Object {
     fn encoded_sha1(&self) -> String {
         hex::encode(self.sha1())
     }
-
 }
 
 /// Determine object type from byte stream
@@ -49,7 +53,7 @@ pub fn determine_object_type(data: &[u8]) -> Result<ObjectType, String> {
     // Validate header format
     let null_pos = memchr(0, data).ok_or("Data missing null character separator")?;
     let header = &data[..null_pos];
-    
+
     // Parse type field
     let space_pos = memchr(b' ', header).ok_or("Header missing space separator")?;
     let type_part = &header[..space_pos];
@@ -75,25 +79,25 @@ impl Object for Blob {
         // Create header components
         let obj_type = "blob";
         let size = self.data.len().to_string();
-        
+
         // Build the serialized byte sequence
         let mut serialized = Vec::new();
-        serialized.extend(obj_type.as_bytes());  // Add type
-        serialized.push(b' ');                   // Add space
-        serialized.extend(size.as_bytes());      // Add size
-        serialized.push(0);                      // Add null byte
-        serialized.extend(&self.data);            // Add contents
-        
+        serialized.extend(obj_type.as_bytes()); // Add type
+        serialized.push(b' '); // Add space
+        serialized.extend(size.as_bytes()); // Add size
+        serialized.push(0); // Add null byte
+        serialized.extend(&self.data); // Add contents
+
         serialized
     }
 }
 
 impl Blob {
     /// Creates a new Blob from a file path
-    /// 
+    ///
     /// # Arguments
     /// * `path` - Path to a valid file
-    /// 
+    ///
     /// # Returns
     /// - Ok(Blob) containing file data if successful
     /// - Err(String) with error message if:
@@ -102,20 +106,19 @@ impl Blob {
     ///   - File read fails
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Blob, String> {
         let path = path.as_ref();
-        
+
         // Validate path existence
         if !path.exists() {
             return Err(format!("Path does not exist: {}", path.display()));
         }
-        
+
         // Validate path is a file
         if !path.is_file() {
             return Err(format!("Path is not a file: {}", path.display()));
         }
-        
+
         // Read file content
-        let data = fs::read(path)
-            .map_err(|e| format!("Failed to read file: {}", e))?;
+        let data = fs::read(path).map_err(|e| format!("Failed to read file: {}", e))?;
 
         Ok(Blob { data })
     }
@@ -123,9 +126,8 @@ impl Blob {
     /// Returns Blob on success, or String with error description on failure
     pub fn deserialize(data: &[u8]) -> Result<Blob, String> {
         // Find null character separator
-        let null_pos = memchr(0, data).ok_or_else(|| 
-            "Missing null separator in blob data".to_string()
-        )?;
+        let null_pos =
+            memchr(0, data).ok_or_else(|| "Missing null separator in blob data".to_string())?;
 
         // Split header and content
         let (header_bytes, contents_with_null) = data.split_at(null_pos);
@@ -136,19 +138,21 @@ impl Blob {
             .map_err(|e| format!("Invalid UTF-8 in header: {}", e))?;
 
         // Split type and size
-        let (obj_type, size_str) = header.split_once(' ')
+        let (obj_type, size_str) = header
+            .split_once(' ')
             .ok_or_else(|| format!("Malformed header: '{}'", header))?;
 
         // Validate object type
         if obj_type != "blob" {
             return Err(format!(
-                "Invalid object type: expected 'blob', found '{}'", 
+                "Invalid object type: expected 'blob', found '{}'",
                 obj_type
             ));
         }
 
         // Parse content length
-        let size = size_str.parse::<usize>()
+        let size = size_str
+            .parse::<usize>()
             .map_err(|_| format!("Invalid size format: '{}'", size_str))?;
 
         // Validate content length
@@ -161,7 +165,7 @@ impl Blob {
         }
 
         Ok(Blob {
-            data: contents.to_vec()
+            data: contents.to_vec(),
         })
     }
 }
@@ -177,7 +181,9 @@ impl Tree {
     pub fn get_object_type<S: AsRef<str>>(&self, filename: S) -> Option<ObjectType> {
         let filename = filename.as_ref();
         let entry = match self.entries.get(filename) {
-            None => {return None;},
+            None => {
+                return None;
+            }
             Some(entry) => entry,
         };
         Some(entry.object_type.clone())
@@ -186,7 +192,9 @@ impl Tree {
     pub fn get_encoded_sha<S: AsRef<str>>(&self, filename: S) -> Option<EncodedSha> {
         let filename = filename.as_ref();
         let entry = match self.entries.get(filename) {
-            None => {return None;},
+            None => {
+                return None;
+            }
             Some(entry) => entry,
         };
         Some(entry.sha1.clone())
@@ -196,12 +204,12 @@ impl Tree {
         let input = std::str::from_utf8(data)?;
 
         // Split header and entries
-        let (header, entries_str) = input.split_once('\0')
+        let (header, entries_str) = input
+            .split_once('\0')
             .ok_or("Invalid format: missing null separator")?;
 
         // Validate header format "tree {size}"
-        let (prefix, size_str) = header.split_once(' ')
-            .ok_or("Invalid header format")?;
+        let (prefix, size_str) = header.split_once(' ').ok_or("Invalid header format")?;
         if prefix != "tree" {
             return Err("Invalid header: not a tree object".into());
         }
@@ -213,7 +221,8 @@ impl Tree {
                 "Size mismatch: expected {}, actual {}",
                 expected_size,
                 entries_str.len()
-            ).into());
+            )
+            .into());
         }
 
         let mut entries = BTreeMap::new();
@@ -221,7 +230,7 @@ impl Tree {
         // Parse each entry
         for line in entries_str.split('\n').filter(|l| !l.is_empty()) {
             let mut parts = line.splitn(3, ' ');
-            
+
             let object_type = match parts.next().ok_or("Missing object type")? {
                 "blob" => ObjectType::Blob,
                 "tree" => ObjectType::Tree,
@@ -263,14 +272,16 @@ impl Tree {
     /// Add an entry to the tree with automatic sorting
     pub fn add_entry(&mut self, object_type: ObjectType, sha1: &EncodedSha, name: &String) {
         // Use BTreeMap to maintain sorted order by filename
-        self.entries.insert(name.to_string(), TreeEntry {
-            object_type: object_type.clone(),
-            sha1: sha1.clone(),
-            name: name.clone(),
-        });
+        self.entries.insert(
+            name.to_string(),
+            TreeEntry {
+                object_type: object_type.clone(),
+                sha1: sha1.clone(),
+                name: name.clone(),
+            },
+        );
     }
 }
-
 
 /// Main tree structure storing sorted entries
 #[derive(Debug)]
@@ -346,11 +357,11 @@ impl Display for Author {
 /// Git commit object structure
 #[derive(Debug)]
 pub struct Commit {
-    tree_sha: EncodedSha,      // SHA1 of the top-level tree object
-    parents: Vec<EncodedSha>,  // List of parent commit SHA1s
-    author: Author,        // Author information
-    committer: Author,     // Committer information
-    message: String,       // Commit message
+    tree_sha: EncodedSha,     // SHA1 of the top-level tree object
+    parents: Vec<EncodedSha>, // List of parent commit SHA1s
+    author: Author,           // Author information
+    committer: Author,        // Committer information
+    message: String,          // Commit message
 }
 
 impl Commit {
@@ -406,7 +417,7 @@ impl Object for Commit {
         let content = self.to_string();
         // Format header: "commit {content_length}\0"
         let header = format!("commit {}\0", content.len());
-        
+
         // Combine header and content
         let mut bytes = Vec::with_capacity(header.len() + content.len());
         bytes.extend_from_slice(header.as_bytes());
@@ -417,7 +428,7 @@ impl Object for Commit {
 
 impl Commit {
     /// Deserialize raw object data into a Commit instance
-    /// 
+    ///
     /// # Format
     /// Expects data in "commit {size}\0{content}" format where content contains:
     /// - tree SHA
@@ -427,7 +438,9 @@ impl Commit {
     /// - commit message
     pub fn deserialize(data: &[u8]) -> Result<Self, String> {
         // Split header and content at null byte
-        let null_pos = data.iter().position(|&b| b == b'\0')
+        let null_pos = data
+            .iter()
+            .position(|&b| b == b'\0')
             .ok_or("Missing null byte separator")?;
         let (header, content) = data.split_at(null_pos);
         let content = &content[1..]; // Skip null byte
@@ -443,8 +456,11 @@ impl Commit {
 
         // Verify content length matches header size
         if content.len() != obj_size {
-            return Err(format!("Size mismatch: header {} vs actual {}", 
-                obj_size, content.len()));
+            return Err(format!(
+                "Size mismatch: header {} vs actual {}",
+                obj_size,
+                content.len()
+            ));
         }
 
         // Parse commit content
@@ -456,7 +472,8 @@ impl Commit {
 fn parse_header(header: &str) -> Result<(&str, usize), String> {
     let mut parts = header.splitn(2, ' ');
     let obj_type = parts.next().ok_or("Missing object type")?;
-    let obj_size = parts.next()
+    let obj_size = parts
+        .next()
         .ok_or("Missing object size")?
         .parse::<usize>()
         .map_err(|e| e.to_string())?;
@@ -467,7 +484,7 @@ fn parse_header(header: &str) -> Result<(&str, usize), String> {
 fn parse_commit_content(content: &[u8]) -> Result<Commit, String> {
     let content_str = std::str::from_utf8(content).map_err(|e| e.to_string())?;
     let mut lines = content_str.lines();
-    
+
     let mut tree_sha = None;
     let mut parents = Vec::new();
     let mut author = None;
@@ -528,11 +545,11 @@ fn parse_author(s: &str) -> Result<Author, String> {
 
     // Parse timestamp with timezone
     let full_ts = format!("{} {}", timestamp, tz);
-    let dt = DateTime::parse_from_str(&full_ts, "%s %z")
-        .map_err(|e| e.to_string())?;
+    let dt = DateTime::parse_from_str(&full_ts, "%s %z").map_err(|e| e.to_string())?;
 
     // Parse name and email
-    let (name, email) = rest.split_once(" <")
+    let (name, email) = rest
+        .split_once(" <")
         .and_then(|(name, rest)| rest.strip_suffix('>').map(|email| (name, email)))
         .ok_or("Malformed author/committer line")?;
 
@@ -562,7 +579,7 @@ impl ObjectDB {
         if !obj_path.exists() {
             // Create directory
             fs::create_dir_all(&obj_dir)?;
-            
+
             // Write data
             let mut file = File::create(&obj_path)?;
             file.write_all(&obj.serialize())?;
@@ -578,7 +595,7 @@ impl ObjectDB {
         if encoded_sha.len() != 40 || !encoded_sha.chars().all(|c| c.is_ascii_hexdigit()) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                "Invalid SHA1 hash format"
+                "Invalid SHA1 hash format",
             ));
         }
 
@@ -604,7 +621,7 @@ mod blob_tests {
     fn creates_blob_from_valid_file() {
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(b"test content").unwrap();
-        
+
         let blob = Blob::new(file.path()).unwrap();
         assert_eq!(blob.data, b"test content");
     }
@@ -629,12 +646,12 @@ mod blob_tests {
         #[cfg(unix)] // Test UNIX-style permissions
         {
             use std::os::unix::fs::PermissionsExt;
-            
+
             let file = NamedTempFile::new().unwrap();
             let mut perms = file.as_file().metadata().unwrap().permissions();
             perms.set_mode(0o000); // No permissions
             file.as_file().set_permissions(perms).unwrap();
-            
+
             let result = Blob::new(file.path());
             assert!(result.is_err());
             assert!(result.unwrap_err().contains("Failed to read"));
@@ -650,36 +667,60 @@ mod tree_tests {
         let mut tree = Tree::new();
         let entry1 = TreeEntry {
             object_type: ObjectType::Blob,
-            sha1: EncodedSha{0: "a906cb2a4a904a152e80877d4088654daad0c859".to_string()},
+            sha1: EncodedSha {
+                0: "a906cb2a4a904a152e80877d4088654daad0c859".to_string(),
+            },
             name: "README".into(),
         };
         let entry2 = TreeEntry {
             object_type: ObjectType::Tree,
-            sha1: EncodedSha{0:"99f1a6d12cb4b6f19c8655fca46c3ecf317074e0".to_string()},
+            sha1: EncodedSha {
+                0: "99f1a6d12cb4b6f19c8655fca46c3ecf317074e0".to_string(),
+            },
             name: "lib".into(),
         };
         // Add test entries
         tree.add_entry(entry1.object_type.clone(), &entry1.sha1, &entry1.name);
-        
+
         tree.add_entry(entry2.object_type.clone(), &entry2.sha1, &entry2.name);
 
         // Verify serialization format
         let data = tree.serialize();
-        let expected_content = format!("{} {} {}\n{} {} {}\n", entry1.object_type.to_string(), entry1.sha1.0, entry1.name, entry2.object_type.to_string(), entry2.sha1.0, entry2.name);
+        let expected_content = format!(
+            "{} {} {}\n{} {} {}\n",
+            entry1.object_type.to_string(),
+            entry1.sha1.0,
+            entry1.name,
+            entry2.object_type.to_string(),
+            entry2.sha1.0,
+            entry2.name
+        );
         let expected_header = format!("tree {}\0", expected_content.len());
-        
+
         assert!(data.starts_with(expected_header.as_bytes()));
         assert!(data.ends_with(expected_content.as_bytes()));
         let deserialized_tree = Tree::deserialize(&data).unwrap();
-        assert_eq!(deserialized_tree.get_object_type(&entry1.name).unwrap(), entry1.object_type);
-        assert_eq!(deserialized_tree.get_encoded_sha(&entry1.name).unwrap(), entry1.sha1);
-        assert_eq!(deserialized_tree.get_object_type(&entry2.name).unwrap(), entry2.object_type);
-        assert_eq!(deserialized_tree.get_encoded_sha(&entry2.name).unwrap(), entry2.sha1);
+        assert_eq!(
+            deserialized_tree.get_object_type(&entry1.name).unwrap(),
+            entry1.object_type
+        );
+        assert_eq!(
+            deserialized_tree.get_encoded_sha(&entry1.name).unwrap(),
+            entry1.sha1
+        );
+        assert_eq!(
+            deserialized_tree.get_object_type(&entry2.name).unwrap(),
+            entry2.object_type
+        );
+        assert_eq!(
+            deserialized_tree.get_encoded_sha(&entry2.name).unwrap(),
+            entry2.sha1
+        );
     }
     #[test]
     fn test_filename_with_spaces() {
         let data = b"tree 61\0blob 0000000000000000000000000000000000000000 file with space";
-        
+
         let tree = Tree::deserialize(data).unwrap();
         let entry = tree.entries.get("file with space").unwrap();
         assert_eq!(entry.name, "file with space");
@@ -725,7 +766,7 @@ mod tree_tests {
         let data = b"tree 94\0\
             blob 0000000000000000000000000000000000000000 dup\n\
             tree 0000000000000000000000000000000000000000 dup\n";
-        
+
         let result = Tree::deserialize(data);
         assert!(result.is_err());
     }
@@ -790,7 +831,7 @@ mod tests {
         let sha1 = db.store(&obj).unwrap();
         // Second store
         let sha2 = db.store(&obj).unwrap();
-        
+
         assert_eq!(sha1, sha2);
     }
     #[test]
@@ -810,14 +851,18 @@ mod tests {
 
     #[test]
     fn test_serialize_ascii_content() {
-        let blob = Blob { data: b"hello".to_vec() };
+        let blob = Blob {
+            data: b"hello".to_vec(),
+        };
         let serialized = blob.serialize();
         assert_eq!(serialized, b"blob 5\0hello");
     }
 
     #[test]
     fn test_serialize_binary_content() {
-        let blob = Blob { data: vec![0x00, 0xFF, 0x42] };
+        let blob = Blob {
+            data: vec![0x00, 0xFF, 0x42],
+        };
         let serialized = blob.serialize();
         let expected = b"blob 3\0\x00\xFF\x42".to_vec();
         assert_eq!(serialized, expected);
@@ -826,12 +871,14 @@ mod tests {
     #[test]
     fn test_roundtrip() {
         let original_data = vec![1, 2, 3, 4, 5];
-        let blob = Blob { data: original_data.clone() };
-        
+        let blob = Blob {
+            data: original_data.clone(),
+        };
+
         // Serialize and deserialize
         let serialized = blob.serialize();
         let deserialized = Blob::deserialize(&serialized).unwrap();
-        
+
         assert_eq!(deserialized.data, original_data);
     }
 
@@ -840,7 +887,7 @@ mod tests {
         let data = vec![0u8; 10_000];
         let blob = Blob { data };
         let serialized = blob.serialize();
-        
+
         // Verify header format
         let header_end = serialized.iter().position(|&b| b == 0).unwrap();
         let header = &serialized[..header_end];
@@ -859,7 +906,7 @@ mod commit_tests {
             .unwrap()
             .with_ymd_and_hms(2023, 7, 20, 10, 30, 0)
             .unwrap();
-        
+
         Author::new("Alice", "alice@example.com", timestamp)
     }
 
@@ -916,11 +963,8 @@ Add new functionality"#;
             .unwrap()
             .with_ymd_and_hms(2023, 7, 20, 10, 30, 0)
             .unwrap();
-        
+
         let author = Author::new("Bob", "bob@company.com", timestamp);
-        assert_eq!(
-            author.to_string(),
-            "Bob <bob@company.com> 1689867000 -0500"
-        );
+        assert_eq!(author.to_string(), "Bob <bob@company.com> 1689867000 -0500");
     }
 }

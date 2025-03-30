@@ -342,7 +342,7 @@ impl Repository {
                     println!("Cannot delete the currently active branch.");
                     std::process::exit(0);
                 }
-            },
+            }
             Head::Detached(_) => (),
         }
         let branch_dir = self.git_dir.join(REFS_DIR).join(HEADS_DIR);
@@ -380,7 +380,9 @@ impl Repository {
         }
         let author_name = "Alice";
         let author_email = "alice@wonderland.edu";
-        let commit_sha = self.commit_tree(tree, vec![parent], message, author_name, author_email).unwrap();
+        let commit_sha = self
+            .commit_tree(tree, vec![parent], message, author_name, author_email)
+            .unwrap();
         let head = self.get_head().unwrap();
         let new_head = match &head {
             Head::Symbolic(path) => {
@@ -388,9 +390,11 @@ impl Repository {
                     name: path.to_string_lossy().to_string(),
                     commit_sha: commit_sha,
                 };
-                branch.save(&self.git_dir.join(path.parent().unwrap())).unwrap();
+                branch
+                    .save(&self.git_dir.join(path.parent().unwrap()))
+                    .unwrap();
                 head
-            },
+            }
             Head::Detached(_) => Head::Detached(commit_sha),
         };
         new_head.save(&self.git_dir.join(HEAD_FILE)).unwrap();

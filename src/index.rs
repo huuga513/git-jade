@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
-use std::path::{Component, Path};
 use std::fmt;
+use std::path::{Component, Path};
 
 use crate::EncodedSha;
 
@@ -75,18 +75,19 @@ impl Index {
 
         let mut current = &mut self.root;
         for component in components.iter().take(components.len() - 1) {
-            current = current.children
+            current = current
+                .children
                 .entry(component.clone())
                 .or_insert_with(TreeNode::new_directory);
         }
 
         let file_name = components.last().unwrap();
-        match current.children.insert(
-            file_name.clone(),
-            TreeNode::new_file(sha1)
-        ) {
-            None => {self.size +=1},
-            Some(_) => {},
+        match current
+            .children
+            .insert(file_name.clone(), TreeNode::new_file(sha1))
+        {
+            None => self.size += 1,
+            Some(_) => {}
         }
     }
 
@@ -107,9 +108,13 @@ impl Index {
             }
         }
 
-        current.children
+        current
+            .children
             .remove(components.last().unwrap())
-            .and_then(|node| {self.size -= 1; node.sha1})
+            .and_then(|node| {
+                self.size -= 1;
+                node.sha1
+            })
     }
 
     /// Get SHA1 by file path
@@ -129,7 +134,8 @@ impl Index {
             }
         }
 
-        current.children
+        current
+            .children
             .get(components.last().unwrap())
             .and_then(|node| node.sha1.as_ref())
     }
@@ -140,8 +146,7 @@ impl Index {
             return Err(format!("Index file not found: {}", index_path.display()));
         }
 
-        let content = std::fs::read_to_string(index_path)
-            .map_err(|e| e.to_string())?;
+        let content = std::fs::read_to_string(index_path).map_err(|e| e.to_string())?;
 
         let mut index = Index::new();
         for line in content.lines() {
@@ -158,13 +163,13 @@ impl Index {
     /// Save index to file
     pub fn save(&self, index_path: &Path) -> Result<(), String> {
         let entries = self.collect_entries();
-        let content = entries.into_iter()
+        let content = entries
+            .into_iter()
             .map(|(path, sha1)| format!("{} {}", path, sha1.0))
             .collect::<Vec<_>>()
             .join("\n");
 
-        std::fs::write(index_path, content)
-            .map_err(|e| e.to_string())
+        std::fs::write(index_path, content).map_err(|e| e.to_string())
     }
 
     /// Collect all entries as (path, SHA1) pairs
@@ -175,17 +180,21 @@ impl Index {
     }
 
     /// Recursive tree traversal to collect entries
-    fn traverse_tree(node: &TreeNode, path: &mut Vec<String>, entries: &mut Vec<(String, EncodedSha)>) {
+    fn traverse_tree(
+        node: &TreeNode,
+        path: &mut Vec<String>,
+        entries: &mut Vec<(String, EncodedSha)>,
+    ) {
         for (name, child) in &node.children {
             path.push(name.clone());
-            
+
             if let Some(sha1) = &child.sha1 {
                 let full_path = path.join("/");
                 entries.push((full_path, sha1.clone()));
             } else {
                 Self::traverse_tree(child, path, entries);
             }
-            
+
             path.pop();
         }
     }
@@ -252,18 +261,39 @@ mod tests {
     #[test]
     fn test_basic_operations() {
         let mut index = Index::new();
-        
+
         // Test adding entries
-        index.update_entry("src/main.rs", EncodedSha::from_str("abcd1234abcd1234abcd1234abcd1234abcd1234").unwrap());
-        index.update_entry("docs/README.md", EncodedSha::from_str("efgh5678abcd1234abcd1234abcd1234abcd1234").unwrap());
-        
+        index.update_entry(
+            "src/main.rs",
+            EncodedSha::from_str("abcd1234abcd1234abcd1234abcd1234abcd1234").unwrap(),
+        );
+        index.update_entry(
+            "docs/README.md",
+            EncodedSha::from_str("efgh5678abcd1234abcd1234abcd1234abcd1234").unwrap(),
+        );
+
         // Test retrieval
-        assert_eq!(index.get_sha1("src/main.rs"), Some(EncodedSha::from_str("abcd1234abcd1234abcd1234abcd1234abcd1234").unwrap()).as_ref());
-        assert_eq!(index.get_sha1("docs\\README.md"), Some(EncodedSha::from_str("efgh5678abcd1234abcd1234abcd1234abcd1234").unwrap()).as_ref()); // Test Windows path
+        assert_eq!(
+            index.get_sha1("src/main.rs"),
+            Some(EncodedSha::from_str("abcd1234abcd1234abcd1234abcd1234abcd1234").unwrap())
+                .as_ref()
+        );
+        assert_eq!(
+            index.get_sha1("docs\\README.md"),
+            Some(EncodedSha::from_str("efgh5678abcd1234abcd1234abcd1234abcd1234").unwrap())
+                .as_ref()
+        ); // Test Windows path
 
         // Test update
-        index.update_entry("src/main.rs", EncodedSha::from_str("newsha10abcd1234abcd1234abcd1234abcd1234").unwrap());
-        assert_eq!(index.get_sha1("src/main.rs"), Some(EncodedSha::from_str("newsha10abcd1234abcd1234abcd1234abcd1234").unwrap()).as_ref());
+        index.update_entry(
+            "src/main.rs",
+            EncodedSha::from_str("newsha10abcd1234abcd1234abcd1234abcd1234").unwrap(),
+        );
+        assert_eq!(
+            index.get_sha1("src/main.rs"),
+            Some(EncodedSha::from_str("newsha10abcd1234abcd1234abcd1234abcd1234").unwrap())
+                .as_ref()
+        );
 
         // Test removal
         assert!(index.remove_entry("docs/README.md").is_some());
@@ -273,22 +303,30 @@ mod tests {
     #[test]
     fn test_path_normalization() {
         let mut index = Index::new();
-        
+
         // Test different path formats
-        index.update_entry("dir\\subdir/file.txt", EncodedSha::from_str("sha1shaaabcd1234abcd1234abcd1234abcd1234").unwrap());
+        index.update_entry(
+            "dir\\subdir/file.txt",
+            EncodedSha::from_str("sha1shaaabcd1234abcd1234abcd1234abcd1234").unwrap(),
+        );
         assert_eq!(
             index.get_sha1("dir/subdir/file.txt"), // UNIX path
-            Some(EncodedSha::from_str("sha1shaaabcd1234abcd1234abcd1234abcd1234").unwrap()).as_ref()
+            Some(EncodedSha::from_str("sha1shaaabcd1234abcd1234abcd1234abcd1234").unwrap())
+                .as_ref()
         );
 
-        index.update_entry("../parent.txt", EncodedSha::from_str("sha2shaaabcd1234abcd1234abcd1234abcd1234").unwrap());
+        index.update_entry(
+            "../parent.txt",
+            EncodedSha::from_str("sha2shaaabcd1234abcd1234abcd1234abcd1234").unwrap(),
+        );
         assert_eq!(
             index.get_sha1("parent.txt"), // Relative components resolved
-            Some(EncodedSha::from_str("sha2shaaabcd1234abcd1234abcd1234abcd1234").unwrap()).as_ref()
+            Some(EncodedSha::from_str("sha2shaaabcd1234abcd1234abcd1234abcd1234").unwrap())
+                .as_ref()
         );
     }
-    use tempfile::NamedTempFile;
     use std::{io::Write, str::FromStr};
+    use tempfile::NamedTempFile;
 
     /// Test loading non-existent index file
     #[test]
@@ -304,11 +342,19 @@ mod tests {
     fn test_load_valid_format() {
         let mut file = NamedTempFile::new().unwrap();
         writeln!(file, "file1.txt abcde12345abcde12345abcde12345abcde12345\nsubdir/file2.txt 67890fghijabcde12345abcde12345abcde12345").unwrap();
-        
+
         let index = Index::load(file.path()).unwrap();
         assert_eq!(index.size, 2);
-        assert_eq!(index.get_sha1("file1.txt"), Some(EncodedSha::from_str("abcde12345abcde12345abcde12345abcde12345").unwrap()).as_ref());
-        assert_eq!(index.get_sha1("subdir/file2.txt"), Some(EncodedSha::from_str("67890fghijabcde12345abcde12345abcde12345").unwrap()).as_ref());
+        assert_eq!(
+            index.get_sha1("file1.txt"),
+            Some(EncodedSha::from_str("abcde12345abcde12345abcde12345abcde12345").unwrap())
+                .as_ref()
+        );
+        assert_eq!(
+            index.get_sha1("subdir/file2.txt"),
+            Some(EncodedSha::from_str("67890fghijabcde12345abcde12345abcde12345").unwrap())
+                .as_ref()
+        );
     }
 
     /// Test loading invalid index format
@@ -316,7 +362,7 @@ mod tests {
     fn test_load_invalid_format() {
         let mut file = NamedTempFile::new().unwrap();
         writeln!(file, "bad_line_without_space").unwrap();
-        
+
         let result = Index::load(file.path());
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Invalid index format");
@@ -326,8 +372,14 @@ mod tests {
     #[test]
     fn test_save_normal_entries() {
         let mut index = Index::new();
-        index.update_entry("a.txt".to_string(), EncodedSha::from_str("abcde12345abcde12345abcde12345abcde12345").unwrap());
-        index.update_entry("b/c.txt".to_string(), EncodedSha::from_str("0123456789012345678901234567890123456789").unwrap());
+        index.update_entry(
+            "a.txt".to_string(),
+            EncodedSha::from_str("abcde12345abcde12345abcde12345abcde12345").unwrap(),
+        );
+        index.update_entry(
+            "b/c.txt".to_string(),
+            EncodedSha::from_str("0123456789012345678901234567890123456789").unwrap(),
+        );
 
         let file = NamedTempFile::new().unwrap();
         index.save(file.path()).unwrap();
@@ -343,7 +395,7 @@ mod tests {
     fn test_save_empty_index() {
         let index = Index::new();
         let file = NamedTempFile::new().unwrap();
-        
+
         index.save(file.path()).unwrap();
         let content = std::fs::read_to_string(file.path()).unwrap();
         assert!(content.is_empty());
@@ -356,7 +408,10 @@ mod path_normalization_tests {
     #[test]
     fn handles_different_os_separators() {
         // Windows 风格路径
-        assert_eq!(Index::normalize_path("dir\\subdir\\file.txt"), "dir/subdir/file.txt");
+        assert_eq!(
+            Index::normalize_path("dir\\subdir\\file.txt"),
+            "dir/subdir/file.txt"
+        );
         // 混合风格路径
         assert_eq!(Index::normalize_path("mixed/dir\\file"), "mixed/dir/file");
     }
@@ -366,7 +421,10 @@ mod path_normalization_tests {
         // 当前目录标记
         assert_eq!(Index::normalize_path("./src/main.rs"), "src/main.rs");
         // 多重分隔符
-        assert_eq!(Index::normalize_path("dir//subdir///file.txt"), "dir/subdir/file.txt");
+        assert_eq!(
+            Index::normalize_path("dir//subdir///file.txt"),
+            "dir/subdir/file.txt"
+        );
     }
 
     #[test]
@@ -388,15 +446,27 @@ mod path_normalization_tests {
     #[test]
     fn preserves_case_sensitivity() {
         // 区分大小写
-        assert_eq!(Index::normalize_path("CaseSensitive.txt"), "CaseSensitive.txt");
-        assert_ne!(Index::normalize_path("caseSENSITIVE.txt"), "casesensitive.txt");
+        assert_eq!(
+            Index::normalize_path("CaseSensitive.txt"),
+            "CaseSensitive.txt"
+        );
+        assert_ne!(
+            Index::normalize_path("caseSENSITIVE.txt"),
+            "casesensitive.txt"
+        );
     }
 
     #[test]
     fn normalizes_special_characters() {
         // 空格处理
-        assert_eq!(Index::normalize_path("dir with space/file"), "dir with space/file");
+        assert_eq!(
+            Index::normalize_path("dir with space/file"),
+            "dir with space/file"
+        );
         // Unicode 字符
-        assert_eq!(Index::normalize_path("中文目录/文件.txt"), "中文目录/文件.txt");
+        assert_eq!(
+            Index::normalize_path("中文目录/文件.txt"),
+            "中文目录/文件.txt"
+        );
     }
 }
