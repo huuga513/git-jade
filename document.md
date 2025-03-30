@@ -125,9 +125,22 @@ HEAD 不属于 git object，所以其自身提供了 save 和 load 方法，给�
 ## remote
 此 git 系统的服务端只需要是一个支持 http GET/POST 操作的服务器。不需要专门的服务端。
 
+## git add
+接受一个 Vec 的文件名参数，对其中的每个文件调用 update-index
 
+## git commit
+接受一个 message 作为参数，调用 write-index 将 index 写入成一组 tree object。再利用 root tree 的sha1 调用 commit-tree 创建一个 commit。将 commit 的 sha 存入 HEAD
+1. 如果 message 为空，报错并退出
+2. 如果 write-index 得到的 root tree 的 sha1 和 HEAD的一致，则报错退出，认为 nothing has been staged
+3. HEAD 分为 detached 和 ref 两种情况。存入 HEAD 时需要区分
 
+## git checkout 
+接受一个 tree obj 的 sha 作为参数，实现分为两步：
+1. read-tree https://git-scm.com/docs/git-read-tree
+   1. 将 `tree-sha` 提供的 tree 信息读取到 index 中，但不会实际更新它所“缓存”的任何文件。
+2. checkout-index 将 index 中列出的所有文件复制到工作目录（不覆盖现有文件）。
 
+## git branch
 
 
 ## 一、核心架构设计

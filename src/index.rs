@@ -254,16 +254,16 @@ mod tests {
         let mut index = Index::new();
         
         // Test adding entries
-        index.update_entry("src/main.rs", EncodedSha::from_str("abcd1234").unwrap());
-        index.update_entry("docs/README.md", EncodedSha::from_str("efgh5678").unwrap());
+        index.update_entry("src/main.rs", EncodedSha::from_str("abcd1234abcd1234abcd1234abcd1234abcd1234").unwrap());
+        index.update_entry("docs/README.md", EncodedSha::from_str("efgh5678abcd1234abcd1234abcd1234abcd1234").unwrap());
         
         // Test retrieval
-        assert_eq!(index.get_sha1("src/main.rs"), Some(EncodedSha::from_str("abcd1234").unwrap()).as_ref());
-        assert_eq!(index.get_sha1("docs\\README.md"), Some(EncodedSha::from_str("efgh5678").unwrap()).as_ref()); // Test Windows path
+        assert_eq!(index.get_sha1("src/main.rs"), Some(EncodedSha::from_str("abcd1234abcd1234abcd1234abcd1234abcd1234").unwrap()).as_ref());
+        assert_eq!(index.get_sha1("docs\\README.md"), Some(EncodedSha::from_str("efgh5678abcd1234abcd1234abcd1234abcd1234").unwrap()).as_ref()); // Test Windows path
 
         // Test update
-        index.update_entry("src/main.rs", EncodedSha::from_str("newsha1").unwrap());
-        assert_eq!(index.get_sha1("src/main.rs"), Some(EncodedSha::from_str("newsha1").unwrap()).as_ref());
+        index.update_entry("src/main.rs", EncodedSha::from_str("newsha10abcd1234abcd1234abcd1234abcd1234").unwrap());
+        assert_eq!(index.get_sha1("src/main.rs"), Some(EncodedSha::from_str("newsha10abcd1234abcd1234abcd1234abcd1234").unwrap()).as_ref());
 
         // Test removal
         assert!(index.remove_entry("docs/README.md").is_some());
@@ -275,16 +275,16 @@ mod tests {
         let mut index = Index::new();
         
         // Test different path formats
-        index.update_entry("dir\\subdir/file.txt", EncodedSha::from_str("sha").unwrap());
+        index.update_entry("dir\\subdir/file.txt", EncodedSha::from_str("sha1shaaabcd1234abcd1234abcd1234abcd1234").unwrap());
         assert_eq!(
             index.get_sha1("dir/subdir/file.txt"), // UNIX path
-            Some(EncodedSha::from_str("sha").unwrap()).as_ref()
+            Some(EncodedSha::from_str("sha1shaaabcd1234abcd1234abcd1234abcd1234").unwrap()).as_ref()
         );
 
-        index.update_entry("../parent.txt", EncodedSha::from_str("sha2").unwrap());
+        index.update_entry("../parent.txt", EncodedSha::from_str("sha2shaaabcd1234abcd1234abcd1234abcd1234").unwrap());
         assert_eq!(
             index.get_sha1("parent.txt"), // Relative components resolved
-            Some(EncodedSha::from_str("sha2").unwrap()).as_ref()
+            Some(EncodedSha::from_str("sha2shaaabcd1234abcd1234abcd1234abcd1234").unwrap()).as_ref()
         );
     }
     use tempfile::NamedTempFile;
@@ -303,12 +303,12 @@ mod tests {
     #[test]
     fn test_load_valid_format() {
         let mut file = NamedTempFile::new().unwrap();
-        writeln!(file, "file1.txt abcde12345\nsubdir/file2.txt 67890fghij").unwrap();
+        writeln!(file, "file1.txt abcde12345abcde12345abcde12345abcde12345\nsubdir/file2.txt 67890fghijabcde12345abcde12345abcde12345").unwrap();
         
         let index = Index::load(file.path()).unwrap();
         assert_eq!(index.size, 2);
-        assert_eq!(index.get_sha1("file1.txt"), Some(EncodedSha::from_str("abcde12345").unwrap()).as_ref());
-        assert_eq!(index.get_sha1("subdir/file2.txt"), Some(EncodedSha::from_str("67890fghij").unwrap()).as_ref());
+        assert_eq!(index.get_sha1("file1.txt"), Some(EncodedSha::from_str("abcde12345abcde12345abcde12345abcde12345").unwrap()).as_ref());
+        assert_eq!(index.get_sha1("subdir/file2.txt"), Some(EncodedSha::from_str("67890fghijabcde12345abcde12345abcde12345").unwrap()).as_ref());
     }
 
     /// Test loading invalid index format
@@ -326,16 +326,16 @@ mod tests {
     #[test]
     fn test_save_normal_entries() {
         let mut index = Index::new();
-        index.update_entry("a.txt".to_string(), EncodedSha::from_str("123").unwrap());
-        index.update_entry("b/c.txt".to_string(), EncodedSha::from_str("456").unwrap());
+        index.update_entry("a.txt".to_string(), EncodedSha::from_str("abcde12345abcde12345abcde12345abcde12345").unwrap());
+        index.update_entry("b/c.txt".to_string(), EncodedSha::from_str("0123456789012345678901234567890123456789").unwrap());
 
         let file = NamedTempFile::new().unwrap();
         index.save(file.path()).unwrap();
 
         let content = std::fs::read_to_string(file.path()).unwrap();
         println!("{}", content);
-        assert!(content.contains("a.txt 123"));
-        assert!(content.contains("b/c.txt 456"));
+        assert!(content.contains("a.txt abcde12345abcde12345abcde12345abcde12345"));
+        assert!(content.contains("b/c.txt 0123456789012345678901234567890123456789"));
     }
 
     /// Test saving empty index

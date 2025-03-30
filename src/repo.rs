@@ -14,6 +14,8 @@ use std::{env, fs, io, path};
 use super::EncodedSha;
 const OBJECTS_DIR: &str = "objects";
 const REFS_DIR: &str = "refs";
+const HEADS_DIR: &str = "heads";
+const MASTER_BRANCH_NAME: &str = "master";
 const HEAD_FILE: &str = "HEAD";
 const GIT_DIR: &str = ".git";
 const INDEX_FILE: &str = "index";
@@ -54,13 +56,13 @@ impl Repository {
 
         true
     }
-    pub fn init(dir: &Path) -> Result<Repository, &str> {
+    pub fn init(dir: &Path) -> Result<Repository, String> {
         if !dir.exists() {
-            return Err("Specified init dir don't exists");
+            return Err("Specified init dir don't exists".to_owned());
         }
         let git_dir = dir.join(GIT_DIR);
         if git_dir.exists() {
-            return Err("git directory already exists");
+            return Err("git directory already exists".to_owned());
         }
         // Create .git directory
         fs::create_dir(&git_dir).map_err(|_| "Failed to create git directory")?;
@@ -74,14 +76,16 @@ impl Repository {
         fs::create_dir(&refs_dir).map_err(|_| "Failed to create refs directory")?;
 
         // Create HEAD file and write initial content
-        let head_file = git_dir.join(HEAD_FILE);
+        let head_path = git_dir.join(HEAD_FILE);
+        // e.g: refs/heads/master
+        let head = Head::Symbolic(Path::new(&refs_dir).join(HEADS_DIR).join(MASTER_BRANCH_NAME));
+        head.save(&head_path).map_err(|why|why.to_string())?;
 
-        let _ = fs::File::create(head_file).map_err(|_| "Failed to create head file");
         let work_dir = env::current_dir().map_err(|_| "Failed to get current working dir")?;
         let obj_db = match ObjectDB::new(&objects_dir) {
             Ok(obj_db) => obj_db,
             Err(_) => {
-                return Err("Failed to create object db");
+                return Err("Failed to create object db".to_owned());
             }
         };
         Ok(Repository {

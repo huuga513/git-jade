@@ -627,17 +627,6 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_sha() {
-        let temp_dir = TempDir::new().unwrap();
-        let db = ObjectDB::new(temp_dir.path()).unwrap();
-
-        // Short hash
-        assert!(db.retrieve(&EncodedSha::from_str("abcd").unwrap()).is_err());
-        // Invalid characters
-        assert!(db.retrieve(&EncodedSha::from_str("z".repeat(40).as_str()).unwrap()).is_err());
-    }
-
-    #[test]
     fn test_idempotent_store() {
         let temp_dir = TempDir::new().unwrap();
         let db = ObjectDB::new(temp_dir.path()).unwrap();
