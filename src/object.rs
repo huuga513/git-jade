@@ -174,6 +174,85 @@ pub struct TreeEntry {
     pub name: String,
 }
 impl Tree {
+    pub fn get_object_type<S: AsRef<str>>(&self, filename: S) -> Option<ObjectType> {
+        let filename = filename.as_ref();
+        let entry = match self.entries.get(filename) {
+            None => {return None;},
+            Some(entry) => entry,
+        };
+        Some(entry.object_type.clone())
+    }
+
+    pub fn get_encoded_sha<S: AsRef<str>>(&self, filename: S) -> Option<EncodedSha> {
+        let filename = filename.as_ref();
+        let entry = match self.entries.get(filename) {
+            None => {return None;},
+            Some(entry) => entry,
+        };
+        Some(entry.sha1.clone())
+    }
+    /// Deserialize a Tree from a byte vector following Git's tree format
+    pub fn deserialize(data: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+        let input = std::str::from_utf8(data)?;
+
+        // Split header and entries
+        let (header, entries_str) = input.split_once('\0')
+            .ok_or("Invalid format: missing null separator")?;
+
+        // Validate header format "tree {size}"
+        let (prefix, size_str) = header.split_once(' ')
+            .ok_or("Invalid header format")?;
+        if prefix != "tree" {
+            return Err("Invalid header: not a tree object".into());
+        }
+
+        // Parse expected content size
+        let expected_size = size_str.parse::<usize>()?;
+        if entries_str.len() != expected_size {
+            return Err(format!(
+                "Size mismatch: expected {}, actual {}",
+                expected_size,
+                entries_str.len()
+            ).into());
+        }
+
+        let mut entries = BTreeMap::new();
+
+        // Parse each entry
+        for line in entries_str.split('\n').filter(|l| !l.is_empty()) {
+            let mut parts = line.splitn(3, ' ');
+            
+            let object_type = match parts.next().ok_or("Missing object type")? {
+                "blob" => ObjectType::Blob,
+                "tree" => ObjectType::Tree,
+                t => return Err(format!("Invalid object type: {}", t).into()),
+            };
+
+            let sha_str = parts.next().ok_or("Missing SHA hash")?;
+            if sha_str.len() != 40 || !sha_str.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Err(format!("Invalid SHA1 format: {}", sha_str).into());
+            }
+            let sha1 = EncodedSha(sha_str.to_string());
+
+            let name = parts.next().ok_or("Missing filename")?.to_string();
+
+            // Validate unique filenames
+            if entries.contains_key(&name) {
+                return Err(format!("Duplicate entry: {}", name).into());
+            }
+
+            entries.insert(
+                name.clone(),
+                TreeEntry {
+                    object_type,
+                    sha1,
+                    name,
+                },
+            );
+        }
+
+        Ok(Tree { entries })
+    }
     /// Create a new empty tree
     pub fn new() -> Self {
         Self {
@@ -588,10 +667,81 @@ mod tree_tests {
         let data = tree.serialize();
         let expected_content = format!("{} {} {}\n{} {} {}\n", entry1.object_type.to_string(), entry1.sha1.0, entry1.name, entry2.object_type.to_string(), entry2.sha1.0, entry2.name);
         let expected_header = format!("tree {}\0", expected_content.len());
-        println!("{}", std::str::from_utf8(&data).unwrap());
         
         assert!(data.starts_with(expected_header.as_bytes()));
         assert!(data.ends_with(expected_content.as_bytes()));
+        let deserialized_tree = Tree::deserialize(&data).unwrap();
+        assert_eq!(deserialized_tree.get_object_type(&entry1.name).unwrap(), entry1.object_type);
+        assert_eq!(deserialized_tree.get_encoded_sha(&entry1.name).unwrap(), entry1.sha1);
+        assert_eq!(deserialized_tree.get_object_type(&entry2.name).unwrap(), entry2.object_type);
+        assert_eq!(deserialized_tree.get_encoded_sha(&entry2.name).unwrap(), entry2.sha1);
+    }
+    #[test]
+    fn test_filename_with_spaces() {
+        let data = b"tree 61\0blob 0000000000000000000000000000000000000000 file with space";
+        
+        let tree = Tree::deserialize(data).unwrap();
+        let entry = tree.entries.get("file with space").unwrap();
+        assert_eq!(entry.name, "file with space");
+    }
+
+    #[test]
+    fn test_missing_null_separator() {
+        let data = b"tree 100invalid_data";
+        let result = Tree::deserialize(data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_invalid_header_prefix() {
+        let data = b"tre 0\0";
+        let result = Tree::deserialize(data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_size_mismatch() {
+        let data = b"tree 100\0small_data";
+        let result = Tree::deserialize(data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_invalid_object_type() {
+        let data = b"tree 46\0commit 0000000000000000000000000000000000000000 test";
+        let result = Tree::deserialize(data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_invalid_sha_format() {
+        let data = b"tree 44\0blob invalid_sha test";
+        let result = Tree::deserialize(data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_duplicate_filename() {
+        let data = b"tree 94\0\
+            blob 0000000000000000000000000000000000000000 dup\n\
+            tree 0000000000000000000000000000000000000000 dup\n";
+        
+        let result = Tree::deserialize(data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_missing_fields() {
+        let data = b"tree 30\0blob 0000000000000000000000000000000000000000";
+        let result = Tree::deserialize(data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_empty_tree() {
+        let data = b"tree 0\0";
+        let tree = Tree::deserialize(data).unwrap();
+        assert!(tree.entries.is_empty());
     }
 }
 #[cfg(test)]
