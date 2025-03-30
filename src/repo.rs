@@ -281,12 +281,18 @@ impl Repository {
         Ok(self.obj_db.store(&commit).map_err(|e| e.to_string())?)
     }
 
+    /// Attempts to load and return the HEAD reference from the .git directory.
+    /// Returns `Some(Head)` if successfully loaded, or `None` on error.
     fn get_head(&self) -> Option<Head> {
         let head_path = self.git_dir.join(HEAD_FILE);
         let head = Head::load(&head_path).ok();
         head
     }
 
+    /// Resolves and returns the SHA1 hash of the current commit.
+    /// - For symbolic references (branches): Follows the branch pointer
+    /// - For detached HEAD states: Directly returns the commit SHA1
+    /// Panics if HEAD cannot be resolved or branch data is corrupted.
     fn get_current_commit(&self) -> EncodedSha {
         let head = self.get_head().unwrap();
         match head {
@@ -302,6 +308,11 @@ impl Repository {
             Head::Detached(encoded_sha) => encoded_sha,
         }
     }
+
+    /// Creates a new branch pointing to the current commit.
+    /// - Checks for existing branch name conflicts
+    /// - Exits process if branch already exists
+    /// - Saves new branch reference in .git/refs/heads/
     fn branch<S: AsRef<String>>(&self, name: S) {
         let branch_dir = self.git_dir.join(REFS_DIR).join(HEADS_DIR);
         match Branch::load(&branch_dir, name.as_ref()) {
@@ -319,12 +330,16 @@ impl Repository {
         branch.save(&branch_dir).unwrap();
     }
 
+    /// Deletes an existing branch.
+    /// - Prevents deletion of currently checked-out branch
+    /// - Exits process if attempting to delete active branch
+    /// - Removes branch reference from .git/refs/heads/
     fn rm_branch<S: AsRef<String>>(&self, name: S) {
         let head = self.get_head().unwrap();
         match head {
             Head::Symbolic(path_buf) => {
                 if path_buf.file_name().unwrap().to_str().unwrap() == name.as_ref() {
-                    println!("A branch with that name already exists.");
+                    println!("Cannot delete the currently active branch.");
                     std::process::exit(0);
                 }
             },
@@ -334,6 +349,8 @@ impl Repository {
         Branch::remove(&branch_dir, name.as_ref()).unwrap()
     }
 
+    /// Stages file changes to the index (staging area).
+    /// Accepts a list of file paths and updates their entries in the index.
     fn add<S: AsRef<String>>(&self, files: &Vec<S>) {
         for file in files {
             let file_path = Path::new(file.as_ref());
@@ -341,6 +358,11 @@ impl Repository {
         }
     }
 
+    /// Creates a new commit with staged changes.
+    /// - Validates non-empty commit message
+    /// - Records parent commit, tree state, and author information
+    /// - Updates HEAD reference (branch pointer or detached commit)
+    /// Exits process if no changes detected or message is empty.
     fn commit<S: AsRef<String>>(&self, message: S) {
         let message = message.as_ref();
         if message.len() == 0 {
