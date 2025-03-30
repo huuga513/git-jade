@@ -139,9 +139,12 @@ HEAD 不属于 git object，所以其自身提供了 save 和 load 方法，给�
 1. read-tree https://git-scm.com/docs/git-read-tree
    1. 将 `tree-sha` 提供的 tree 信息读取到 index 中，但不会实际更新它所“缓存”的任何文件。
 2. checkout-index 将 index 中列出的所有文件复制到工作目录（不覆盖现有文件）。
+3. 将 HEAD 设定为 checkout 的 branch
 
 ## git branch
 接受一个name为参数。如果 name 代表的 branch 已经存在，报错退出。否则以当前commit 创建分支。
+
+## git merge
 
 
 ## 一、核心架构设计

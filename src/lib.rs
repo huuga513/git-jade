@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{path::Display, str::FromStr};
 
 pub use repo::Repository;
 pub mod repo;
@@ -27,8 +27,8 @@ impl FromStr for EncodedSha {
     }
 }
 
-impl ToString for EncodedSha {
-    fn to_string(&self) -> String {
-        self.0.clone()
+impl std::fmt::Display for EncodedSha {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }

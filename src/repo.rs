@@ -259,8 +259,8 @@ impl Repository {
     /// SHA1 hash of the created commit object
     fn commit_tree(
         &self,
-        tree_sha: &str,
-        parents: Vec<String>,
+        tree_sha: EncodedSha,
+        parents: Vec<EncodedSha>,
         message: &str,
         author_name: &str,
         author_email: &str,
@@ -332,6 +332,46 @@ impl Repository {
         }
         let branch_dir = self.git_dir.join(REFS_DIR).join(HEADS_DIR);
         Branch::remove(&branch_dir, name.as_ref()).unwrap()
+    }
+
+    fn add<S: AsRef<String>>(&self, files: &Vec<S>) {
+        for file in files {
+            let file_path = Path::new(file.as_ref());
+            self.update_index(file_path).unwrap();
+        }
+    }
+
+    fn commit<S: AsRef<String>>(&self, message: S) {
+        let message = message.as_ref();
+        if message.len() == 0 {
+            println!("Please enter a commit message.");
+            std::process::exit(0);
+        }
+        let parent = self.get_current_commit();
+        let tree = self.write_tree().unwrap();
+        let current_commit_sha1 = self.get_current_commit();
+        let current_commit_data = self.obj_db.retrieve(current_commit_sha1).unwrap();
+        let current_commit = Commit::deserialize(&current_commit_data).unwrap();
+        if tree == current_commit.get_tree_sha() {
+            println!("No changes added to the commit.");
+            std::process::exit(0);
+        }
+        let author_name = "Alice";
+        let author_email = "alice@wonderland.edu";
+        let commit_sha = self.commit_tree(tree, vec![parent], message, author_name, author_email).unwrap();
+        let head = self.get_head().unwrap();
+        let new_head = match &head {
+            Head::Symbolic(path) => {
+                let branch = Branch {
+                    name: path.to_string_lossy().to_string(),
+                    commit_sha: commit_sha,
+                };
+                branch.save(&self.git_dir.join(path.parent().unwrap())).unwrap();
+                head
+            },
+            Head::Detached(_) => Head::Detached(commit_sha),
+        };
+        new_head.save(&self.git_dir.join(HEAD_FILE)).unwrap();
     }
 }
 
@@ -553,7 +593,7 @@ mod function_tests {
     #[test]
     fn create_initial_commit() {
         let repo = create_test_repo();
-        let tree_sha = "b45ef6fec89518d314f546fd3b302bf7a11b0d18";
+        let tree_sha = EncodedSha::from_str("b45ef6fec89518d314f546fd3b302bf7a11b0d18").unwrap();
 
         let result = repo.commit_tree(
             tree_sha,
@@ -573,10 +613,10 @@ mod function_tests {
     #[test]
     fn create_merge_commit() {
         let repo = create_test_repo();
-        let tree_sha = "d4b8e6d7f7c1b7e0e6a4b8e6d7f7c1b7e0e6a4b8";
+        let tree_sha = EncodedSha::from_str("d4b8e6d7f7c1b7e0e6a4b8e6d7f7c1b7e0e6a4b8").unwrap();
         let parents = vec![
-            "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3".to_string(),
-            "b45ef6fec89518d314f546fd3b302bf7a11b0d18".to_string(),
+            EncodedSha("a94a8fe5ccb19ba61c4c0873d391e987982fbbd3".to_string()),
+            EncodedSha("b45ef6fec89518d314f546fd3b302bf7a11b0d18".to_string()),
         ];
 
         let result = repo.commit_tree(
@@ -599,7 +639,7 @@ mod function_tests {
     #[test]
     fn commit_structure_validation() {
         let repo = create_test_repo();
-        let tree_sha = "b45ef6fec89518d314f546fd3b302bf7a11b0d18";
+        let tree_sha = EncodedSha::from_str("b45ef6fec89518d314f546fd3b302bf7a11b0d18").unwrap();
 
         let sha = repo
             .commit_tree(

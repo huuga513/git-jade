@@ -267,8 +267,8 @@ impl Display for Author {
 /// Git commit object structure
 #[derive(Debug)]
 pub struct Commit {
-    tree_sha: String,      // SHA1 of the top-level tree object
-    parents: Vec<String>,  // List of parent commit SHA1s
+    tree_sha: EncodedSha,      // SHA1 of the top-level tree object
+    parents: Vec<EncodedSha>,  // List of parent commit SHA1s
     author: Author,        // Author information
     committer: Author,     // Committer information
     message: String,       // Commit message
@@ -276,22 +276,25 @@ pub struct Commit {
 
 impl Commit {
     pub fn new(
-        tree_sha: &str,
-        parents: Vec<String>,
+        tree_sha: EncodedSha,
+        parents: Vec<EncodedSha>,
         author: Author,
         committer: Author,
         message: &str,
     ) -> Self {
         Self {
-            tree_sha: tree_sha.to_string(),
+            tree_sha: tree_sha,
             parents,
             author,
             committer,
             message: message.to_string(),
         }
     }
-    pub fn get_parents(&self) -> &Vec<String> {
+    pub fn get_parents(&self) -> &Vec<EncodedSha> {
         &self.parents
+    }
+    pub fn get_tree_sha(&self) -> EncodedSha {
+        self.tree_sha.clone()
     }
 }
 
@@ -409,7 +412,7 @@ fn parse_commit_content(content: &[u8]) -> Result<Commit, String> {
         if let Some(sha) = line.strip_prefix("tree ") {
             tree_sha = Some(sha.to_string());
         } else if let Some(parent_sha) = line.strip_prefix("parent ") {
-            parents.push(parent_sha.to_string());
+            parents.push(EncodedSha(parent_sha.to_string()));
         } else if let Some(auth_info) = line.strip_prefix("author ") {
             author = Some(parse_author(auth_info)?);
         } else if let Some(committer_info) = line.strip_prefix("committer ") {
@@ -421,6 +424,7 @@ fn parse_commit_content(content: &[u8]) -> Result<Commit, String> {
 
     // Validate required fields
     let tree_sha = tree_sha.ok_or("Missing tree SHA")?;
+    let tree_sha = EncodedSha(tree_sha);
     let author = author.ok_or("Missing author")?;
     let committer = committer.ok_or("Missing committer")?;
 
@@ -696,6 +700,8 @@ mod tests {
 
 #[cfg(test)]
 mod commit_tests {
+    use std::str::FromStr;
+
     use super::*;
     use chrono::TimeZone;
     fn create_sample_author() -> Author {
@@ -711,7 +717,7 @@ mod commit_tests {
     fn test_initial_commit() {
         let author = create_sample_author();
         let commit = Commit::new(
-            "b45ef6fec89518d314f546fd3b302bf7a11b0d18",
+            EncodedSha::from_str("b45ef6fec89518d314f546fd3b302bf7a11b0d18").unwrap(),
             vec![],
             author.clone(),
             author,
@@ -731,10 +737,10 @@ Initial commit"#;
     fn test_commit_with_parents() {
         let author = create_sample_author();
         let commit = Commit::new(
-            "d4b8e6d7f7c1b7e0e6a4b8e6d7f7c1b7e0e6a4b8",
+            EncodedSha::from_str("d4b8e6d7f7c1b7e0e6a4b8e6d7f7c1b7e0e6a4b8").unwrap(),
             vec![
-                "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3".to_string(),
-                "b45ef6fec89518d314f546fd3b302bf7a11b0d18".to_string(),
+                EncodedSha("a94a8fe5ccb19ba61c4c0873d391e987982fbbd3".to_string()),
+                EncodedSha("b45ef6fec89518d314f546fd3b302bf7a11b0d18".to_string()),
             ],
             author.clone(),
             author,
