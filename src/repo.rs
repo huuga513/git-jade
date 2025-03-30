@@ -2,16 +2,17 @@ use chrono::{FixedOffset, Utc};
 
 use crate::object::{Author, Commit};
 
+use super::EncodedSha;
 use super::index::{Index, TreeNode};
 use super::object::{Blob, ObjectDB, ObjectType, Tree};
 use core::error;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::format;
+use std::os::unix::process;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::{env, fs, io, path};
-use super::EncodedSha;
 const OBJECTS_DIR: &str = "objects";
 const REFS_DIR: &str = "refs";
 const HEADS_DIR: &str = "heads";
@@ -26,7 +27,6 @@ pub struct Repository {
     work_dir: PathBuf, // Path to the current working directory.
     obj_db: ObjectDB,
 }
-
 
 impl Repository {
     pub fn is_vaild_git_dir(path: &Path) -> bool {
@@ -78,8 +78,12 @@ impl Repository {
         // Create HEAD file and write initial content
         let head_path = git_dir.join(HEAD_FILE);
         // e.g: refs/heads/master
-        let head = Head::Symbolic(Path::new(&refs_dir).join(HEADS_DIR).join(MASTER_BRANCH_NAME));
-        head.save(&head_path).map_err(|why|why.to_string())?;
+        let head = Head::Symbolic(
+            Path::new(&refs_dir)
+                .join(HEADS_DIR)
+                .join(MASTER_BRANCH_NAME),
+        );
+        head.save(&head_path).map_err(|why| why.to_string())?;
 
         let work_dir = env::current_dir().map_err(|_| "Failed to get current working dir")?;
         let obj_db = match ObjectDB::new(&objects_dir) {
@@ -213,12 +217,12 @@ impl Repository {
     }
     /// Converts the index into tree objects and stores them in the object database,
     /// returning the SHA1 hash of the root tree.
-    /// 
+    ///
     /// # Workflow
     /// 1. Loads the index file from `.git/index`
     /// 2. Recursively constructs tree objects from directory structure
     /// 3. Stores all tree objects in the object database
-    /// 
+    ///
     /// # Returns
     /// - `Ok(EncodedSha)`: 40-character SHA1 hash of root tree
     /// - `Err(String)`: Error description if any operation fails
@@ -238,19 +242,19 @@ impl Repository {
                 tree.add_entry(ObjectType::Tree, &subdir_tree_sha1, name);
             }
         }
-        let sha = self.obj_db.store(&tree).map_err(|why|why.to_string())?;
+        let sha = self.obj_db.store(&tree).map_err(|why| why.to_string())?;
         Ok(sha)
     }
     /// Creates a commit object from a tree SHA and parent commits,
     /// then stores it in the object database.
-    /// 
+    ///
     /// # Arguments
     /// * `tree_sha` - SHA1 hash of the tree object representing the snapshot
     /// * `parents` - List of parent commit SHA1s (empty for initial commit)
     /// * `message` - Commit message
     /// * `author_name` - Config user.name for author
     /// * `author_email` - Config user.email for author
-    /// 
+    ///
     /// # Returns
     /// SHA1 hash of the created commit object
     fn commit_tree(
@@ -271,18 +275,43 @@ impl Repository {
         let committer = author.clone();
 
         // Build commit object
-        let commit = Commit::new(
-            tree_sha,
-            parents,
-            author,
-            committer,
-            message,
-        );
+        let commit = Commit::new(tree_sha, parents, author, committer, message);
 
         // Store in object database and return SHA1
-        Ok(self.obj_db
-            .store(&commit)
-            .map_err(|e| e.to_string())?)
+        Ok(self.obj_db.store(&commit).map_err(|e| e.to_string())?)
+    }
+
+    fn get_current_commit(&self) -> EncodedSha {
+        let head_path = self.git_dir.join(HEAD_FILE);
+        let head = Head::load(&head_path).unwrap();
+        match head {
+            Head::Symbolic(path_buf) => {
+                let branch_path = self.git_dir.join(path_buf);
+                let branch = Branch::load(
+                    &branch_path.parent().unwrap(),
+                    branch_path.file_name().unwrap().to_str().unwrap(),
+                )
+                .unwrap();
+                branch.commit_sha
+            }
+            Head::Detached(encoded_sha) => encoded_sha,
+        }
+    }
+    fn branch<S: AsRef<String>>(&self, name: S) {
+        let branch_dir = self.git_dir.join(REFS_DIR).join(HEADS_DIR);
+        match Branch::load(&branch_dir, name.as_ref()) {
+            Ok(_) => {
+                println!("A branch with that name already exists.");
+                std::process::exit(0);
+            }
+            Err(_) => {}
+        };
+        let current_commit = self.get_current_commit();
+        let branch = Branch {
+            name: name.as_ref().clone(),
+            commit_sha: current_commit,
+        };
+        branch.save(&branch_dir).unwrap();
     }
 }
 
@@ -315,10 +344,10 @@ impl Branch {
         })
     }
     /// Removes the branch file from the specified base directory.
-    /// 
+    ///
     /// # Arguments
     /// * `base_path` - The directory containing branch files
-    /// 
+    ///
     /// # Returns
     /// * `io::Result<()>` - Success if file is deleted, error if deletion fails
     pub fn remove(base_path: &Path, name: &str) -> io::Result<()> {
@@ -341,13 +370,13 @@ impl Head {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        
+
         // Generate content based on state
         let content = match self {
             Head::Symbolic(ref_path) => format!("ref: {}", ref_path.display()),
             Head::Detached(sha) => sha.0.clone(),
         };
-        
+
         fs::write(path, content)
     }
 
@@ -359,7 +388,7 @@ impl Head {
         // Parse symbolic reference
         if let Some(stripped) = content.strip_prefix("ref: ") {
             Ok(Head::Symbolic(PathBuf::from(stripped)))
-        } 
+        }
         // Parse detached HEAD state
         else {
             Ok(EncodedSha::from_str(content)
@@ -505,7 +534,7 @@ mod function_tests {
     fn create_initial_commit() {
         let repo = create_test_repo();
         let tree_sha = "b45ef6fec89518d314f546fd3b302bf7a11b0d18";
-        
+
         let result = repo.commit_tree(
             tree_sha,
             vec![],
@@ -516,7 +545,7 @@ mod function_tests {
 
         assert!(result.is_ok());
         let commit_sha = result.unwrap();
-        
+
         // Verify commit exists in object database
         assert!(repo.obj_db.retrieve(&commit_sha).is_ok());
     }
@@ -540,7 +569,7 @@ mod function_tests {
 
         assert!(result.is_ok());
         let commit_sha = result.unwrap();
-        
+
         // Verify parent relationships
         let commit_data = repo.obj_db.retrieve(&commit_sha).unwrap();
         let commit = Commit::deserialize(&commit_data).unwrap();
@@ -551,14 +580,16 @@ mod function_tests {
     fn commit_structure_validation() {
         let repo = create_test_repo();
         let tree_sha = "b45ef6fec89518d314f546fd3b302bf7a11b0d18";
-        
-        let sha = repo.commit_tree(
-            tree_sha,
-            vec![],
-            "Test commit",
-            "Charlie",
-            "charlie@test.org",
-        ).unwrap();
+
+        let sha = repo
+            .commit_tree(
+                tree_sha,
+                vec![],
+                "Test commit",
+                "Charlie",
+                "charlie@test.org",
+            )
+            .unwrap();
 
         // Raw commit content verification
         let raw_commit = repo.obj_db.retrieve(&sha).unwrap();
@@ -573,8 +604,8 @@ mod function_tests {
 #[cfg(test)]
 mod branch_tests {
     use super::*;
-    use tempfile::TempDir;
     use std::io;
+    use tempfile::TempDir;
 
     #[test]
     fn test_save_and_load_branch() {
@@ -629,12 +660,9 @@ mod branch_tests {
         // Test loading a non-existent branch
         let temp_dir = TempDir::new().unwrap();
         let result = Branch::load(temp_dir.path(), "ghost-branch");
-        
+
         assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().kind(),
-            io::ErrorKind::NotFound
-        );
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::NotFound);
     }
 
     #[test]
@@ -642,17 +670,14 @@ mod branch_tests {
         // Test loading an invalid hash value
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("invalid-branch");
-        
+
         // Write invalid content
         fs::write(&file_path, "short-hash").unwrap();
 
         let result = Branch::load(temp_dir.path(), "invalid-branch");
-        
+
         assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().kind(),
-            io::ErrorKind::InvalidData
-        );
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
     }
     #[test]
     fn test_remove_existing_branch() -> io::Result<()> {
@@ -676,7 +701,7 @@ mod branch_tests {
     fn test_remove_nonexistent_branch() {
         let temp_dir = TempDir::new().unwrap();
         let result = Branch::remove(temp_dir.path(), "ghost-branch");
-        
+
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::NotFound);
     }
@@ -684,11 +709,11 @@ mod branch_tests {
     #[test]
     fn test_remove_with_invalid_name() {
         let temp_dir = TempDir::new().unwrap();
-        
+
         // Test empty branch name
         let result = Branch::remove(temp_dir.path(), "");
         assert!(result.is_err());
-        
+
         // Test name with invalid characters
         let result = Branch::remove(temp_dir.path(), "invalid/name@");
         assert!(result.is_err());
@@ -765,7 +790,7 @@ mod head_tests {
 
         // Write invalid content
         fs::write(&head_path, "invalid_commit_hash").unwrap();
-        
+
         let result = Head::load(&head_path);
         assert!(matches!(result, Err(e) if e.kind() == io::ErrorKind::InvalidData));
     }

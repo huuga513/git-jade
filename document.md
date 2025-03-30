@@ -141,6 +141,7 @@ HEAD 不属于 git object，所以其自身提供了 save 和 load 方法，给�
 2. checkout-index 将 index 中列出的所有文件复制到工作目录（不覆盖现有文件）。
 
 ## git branch
+接受一个name为参数。如果 name 代表的 branch 已经存在，报错退出。否则以当前commit 创建分支。
 
 
 ## 一、核心架构设计
