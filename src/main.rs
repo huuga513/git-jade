@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use git_rs::{Repository, repo};
-use std::{env::current_dir, path::Path};
+use std::{env::current_dir, path::{Path, PathBuf}};
 
 #[derive(Parser)]
 #[command(name = "rugit")]
@@ -53,23 +53,34 @@ enum Command {
     },
 }
 
+fn find_repo_dir() -> PathBuf {
+    let repo_dir = current_dir().unwrap();
+    repo_dir
+}
+fn open_repo(repo_dir: &Path) -> Repository {
+    let repo = match Repository::open(&repo_dir) {
+        Ok(repo) => repo,
+        Err(why) => {
+            println!("{why}");
+            std::process::exit(-1);
+        }
+    };
+    repo
+}
+
 fn main() {
     let args = Args::parse();
 
     match args.command {
         Command::Commit { message } => {
             println!("Commit message: {}", message);
-            // Actual commit logic here
+            let repo_dir = find_repo_dir();
+            let repo = open_repo(&repo_dir);
+            repo.commit(message);
         }
         Command::Add { paths } => {
-            let repo_dir = current_dir().unwrap();
-            let repo = match Repository::open(&repo_dir) {
-                Ok(repo) => repo,
-                Err(why) => {
-                    println!("{why}");
-                    std::process::exit(-1);
-                }
-            };
+            let repo_dir = find_repo_dir();
+            let repo = open_repo(&repo_dir);
             repo.add(&paths);
         }
         Command::Init => {
@@ -91,6 +102,7 @@ fn main() {
         }
         Command::Checkout { target } => {
             println!("Checking out to: {}", target);
+
         }
         Command::Merge { branch } => {
             println!("Merging branch: {}", branch);

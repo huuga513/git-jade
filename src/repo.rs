@@ -75,20 +75,14 @@ impl Repository {
         let refs_dir = git_dir.join(REFS_DIR);
         fs::create_dir(&refs_dir).map_err(|_| "Failed to create refs directory")?;
 
-
         // Create refs/heads directory
         let heads_dir = refs_dir.join(HEADS_DIR);
         fs::create_dir(&heads_dir).map_err(|_| "Failed to create heads directory")?;
 
-
         // Create HEAD file and write initial content
         let head_path = git_dir.join(HEAD_FILE);
         // e.g: refs/heads/master
-        let head = Head::Symbolic(
-            Path::new(REFS_DIR)
-                .join(HEADS_DIR)
-                .join(MASTER_BRANCH_NAME),
-        );
+        let head = Head::Symbolic(Path::new(REFS_DIR).join(HEADS_DIR).join(MASTER_BRANCH_NAME));
         head.save(&head_path).map_err(|why| why.to_string())?;
 
         let work_dir = env::current_dir().map_err(|_| "Failed to get current working dir")?;
@@ -299,19 +293,22 @@ impl Repository {
     /// - For symbolic references (branches): Follows the branch pointer
     /// - For detached HEAD states: Directly returns the commit SHA1
     /// Panics if HEAD cannot be resolved or branch data is corrupted.
-    fn get_current_commit(&self) -> EncodedSha {
+    /// If there is no commit found (e.g: just after git init), None is returned.
+    fn get_current_commit(&self) -> Option<EncodedSha> {
         let head = self.get_head().unwrap();
         match head {
             Head::Symbolic(path_buf) => {
                 let branch_path = self.git_dir.join(path_buf);
-                let branch = Branch::load(
+                let branch_result = Branch::load(
                     &branch_path.parent().unwrap(),
                     branch_path.file_name().unwrap().to_str().unwrap(),
-                )
-                .unwrap();
-                branch.commit_sha
+                );
+                match branch_result {
+                    Ok(branch) => Some(branch.commit_sha),
+                    Err(_) => None,
+                }
             }
-            Head::Detached(encoded_sha) => encoded_sha,
+            Head::Detached(encoded_sha) => Some(encoded_sha),
         }
     }
 
@@ -328,7 +325,7 @@ impl Repository {
             }
             Err(_) => {}
         };
-        let current_commit = self.get_current_commit();
+        let current_commit = self.get_current_commit().unwrap();
         let branch = Branch {
             name: name.as_ref().clone(),
             commit_sha: current_commit,
@@ -369,31 +366,37 @@ impl Repository {
     /// - Records parent commit, tree state, and author information
     /// - Updates HEAD reference (branch pointer or detached commit)
     /// Exits process if no changes detected or message is empty.
-    fn commit<S: AsRef<String>>(&self, message: S) {
+    pub fn commit<S: AsRef<str>>(&self, message: S) {
         let message = message.as_ref();
         if message.len() == 0 {
             println!("Please enter a commit message.");
             std::process::exit(0);
         }
-        let parent = self.get_current_commit();
         let tree = self.write_tree().unwrap();
-        let current_commit_sha1 = self.get_current_commit();
-        let current_commit_data = self.obj_db.retrieve(current_commit_sha1).unwrap();
-        let current_commit = Commit::deserialize(&current_commit_data).unwrap();
-        if tree == current_commit.get_tree_sha() {
-            println!("No changes added to the commit.");
-            std::process::exit(0);
-        }
         let author_name = "Alice";
         let author_email = "alice@wonderland.edu";
-        let commit_sha = self
-            .commit_tree(tree, vec![parent], message, author_name, author_email)
-            .unwrap();
+        let parent = self.get_current_commit();
+        let commit_sha = match parent {
+            Some(parent_sha) => {
+                let parent_commit_data = self.obj_db.retrieve(&parent_sha).unwrap();
+                let parent_commit = Commit::deserialize(&parent_commit_data).unwrap();
+                if tree == parent_commit.get_tree_sha() {
+                    println!("No changes added to the commit.");
+                    std::process::exit(0);
+                } else {
+                    self.commit_tree(tree, vec![parent_sha], message, author_name, author_email)
+                        .unwrap()
+                }
+            }
+            None => self
+                .commit_tree(tree, vec![], message, author_name, author_email)
+                .unwrap(),
+        };
         let head = self.get_head().unwrap();
         let new_head = match &head {
             Head::Symbolic(path) => {
                 let branch = Branch {
-                    name: path.to_string_lossy().to_string(),
+                    name: path.file_name().unwrap().to_string_lossy().to_string(),
                     commit_sha: commit_sha,
                 };
                 branch
