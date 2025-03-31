@@ -5,14 +5,9 @@ use crate::object::{Author, Commit};
 use super::EncodedSha;
 use super::index::{Index, TreeNode};
 use super::object::{Blob, ObjectDB, ObjectType, Tree};
-use core::error;
 use std::collections::HashMap;
-use std::collections::btree_set::Difference;
-use std::error::Error;
-use std::fmt::format;
-use std::fs::{DirBuilder, File};
+use std::fs::File;
 use std::io::Write;
-use std::os::unix::process;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::{env, fs, io, path};
@@ -456,6 +451,9 @@ impl Repository {
                 println!("{why}");
                 std::process::exit(1);
             });
+
+        let head = Head::Symbolic(Path::new(REFS_DIR).join(HEADS_DIR).join(branch.name));
+        head.save(&self.git_dir.join(HEAD_FILE)).unwrap();
     }
 
     /// Recursively collects all file entries from a tree object
@@ -579,7 +577,7 @@ impl Repository {
     /// - Checks for existing branch name conflicts
     /// - Exits process if branch already exists
     /// - Saves new branch reference in .git/refs/heads/
-    fn branch<S: AsRef<String>>(&self, name: S) {
+    pub fn branch<S: AsRef<str>>(&self, name: S) {
         let branch_dir = self.git_dir.join(REFS_DIR).join(HEADS_DIR);
         match Branch::load(&branch_dir, name.as_ref()) {
             Ok(_) => {
@@ -590,17 +588,19 @@ impl Repository {
         };
         let current_commit = self.get_current_commit().unwrap();
         let branch = Branch {
-            name: name.as_ref().clone(),
+            name: name.as_ref().to_string(),
             commit_sha: current_commit,
         };
         branch.save(&branch_dir).unwrap();
+        let head = Head::Symbolic(Path::new(REFS_DIR).join(HEADS_DIR).join(branch.name));
+        head.save(&self.git_dir.join(HEAD_FILE)).unwrap();
     }
 
     /// Deletes an existing branch.
     /// - Prevents deletion of currently checked-out branch
     /// - Exits process if attempting to delete active branch
     /// - Removes branch reference from .git/refs/heads/
-    fn rm_branch<S: AsRef<String>>(&self, name: S) {
+    pub fn rm_branch<S: AsRef<str>>(&self, name: S) {
         let head = self.get_head().unwrap();
         match head {
             Head::Symbolic(path_buf) => {

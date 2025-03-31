@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use git_rs::{Repository, repo};
+use git_rs::Repository;
 use std::{env::current_dir, path::{Path, PathBuf}};
 
 #[derive(Parser)]
@@ -94,10 +94,14 @@ fn main() {
             };
         }
         Command::Branch { name, delete } => {
+            let repo_dir = find_repo_dir();
+            let repo = open_repo(&repo_dir);
             if delete {
                 println!("Deleting branch '{}'", name);
+                repo.rm_branch(name);
             } else {
                 println!("Creating branch '{}'", name);
+                repo.branch(name);
             }
         }
         Command::Checkout { target } => {
