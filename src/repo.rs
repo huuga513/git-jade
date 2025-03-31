@@ -417,10 +417,23 @@ impl Repository {
     ///
     /// # Arguments
     /// * `branch_name` - Name of the branch to check out
-    fn checkout(&self, branch_name: &str) {
+    pub fn checkout(&self, branch_name: &str) {
         // Load branch metadata
-        let branch =
-            Branch::load(&self.git_dir.join(REFS_DIR).join(HEADS_DIR), branch_name).unwrap();
+        let branch = match Branch::load(&self.git_dir.join(REFS_DIR).join(HEADS_DIR), branch_name) {
+            Ok(branch) => branch,
+            Err(_) => {
+                println!("No such branch exists.");
+                std::process::exit(1);
+            }
+        };
+        if let Some(head) = self.get_head() {
+            if let Head::Symbolic(current_branch_path) = head {
+                if current_branch_path.file_name().unwrap().to_str().unwrap() == &branch.name {
+                    println!("No need to checkout current branch");
+                    std::process::exit(1);
+                }
+            }
+        }
         let commit_sha = branch.commit_sha;
 
         // Load commit data
@@ -433,6 +446,8 @@ impl Repository {
             println!("{why}");
             std::process::exit(1);
         });
+
+        self.checkout_index(&index);
 
         // Save index state and update working directory
         index

@@ -102,6 +102,9 @@ fn main() {
         }
         Command::Checkout { target } => {
             println!("Checking out to: {}", target);
+            let repo_dir = find_repo_dir();
+            let repo = open_repo(&repo_dir);
+            repo.checkout(&target);
 
         }
         Command::Merge { branch } => {
