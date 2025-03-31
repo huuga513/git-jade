@@ -261,11 +261,22 @@ impl Repository {
         Ok(sha)
     }
 
-    /// Create index from tree
+    /// Creates an index by reading a tree object from the object database
+    ///
+    /// # Arguments
+    /// * `tree_root` - SHA1 hash of the root tree object to read
+    ///
+    /// # Returns
+    /// Result containing the populated Index or error string
     fn read_tree(&self, tree_root: EncodedSha) -> Result<Index, String> {
+        // Initialize empty index
         let mut index = Index::new();
+
+        // Recursively collect all file paths and their corresponding SHA1 hashes
         let (path_vec, sha_vec) = self.collect_tree_files(&tree_root)?;
         debug_assert_eq!(path_vec.len(), sha_vec.len());
+
+        // Populate index with collected entries
         let mut i = 0;
         for sha in sha_vec.into_iter() {
             index.update_entry(&path_vec[i], sha);
@@ -274,14 +285,27 @@ impl Repository {
         Ok(index)
     }
 
+    /// Computes differences between two indexes
+    ///
+    /// # Arguments
+    /// * `lhs` - Left-hand side index to compare
+    /// * `rhs` - Right-hand side index to compare
+    ///
+    /// # Returns
+    /// HashMap mapping file paths to their difference status
     fn diff_index(&self, lhs: &Index, rhs: &Index) -> HashMap<String, IndexDiffType> {
         let mut diff: HashMap<String, IndexDiffType> = HashMap::new();
+
+        // First pass: Mark all left-side entries as LeftOnly
         for (name, _) in lhs.collect_entries() {
             diff.insert(name, IndexDiffType::LeftOnly);
         }
+
+        // Second pass: Update status for right-side entries
         for (name, _) in rhs.collect_entries() {
             diff.entry(name.clone())
                 .and_modify(|status| {
+                    // Compare SHA1 hashes to determine modification status
                     *status = if lhs.get_sha1(&name).unwrap() == rhs.get_sha1(&name).unwrap() {
                         IndexDiffType::Unmodified
                     } else {
@@ -293,7 +317,12 @@ impl Repository {
         diff
     }
 
+    /// Updates working directory to match the specified index
+    ///
+    /// # Arguments
+    /// * `index` - Target index to check out
     fn checkout_index(&self, index: &Index) {
+        // Get current commit data
         let current_commit_sha = self.get_current_commit().unwrap_or_else(|| {
             println!("Failed to fetch current commit");
             std::process::exit(1);
@@ -309,13 +338,19 @@ impl Repository {
             println!("{}", why.to_string());
             std::process::exit(1);
         });
+
+        // Build index from current commit's tree
         let current_commit_index = self
             .read_tree(current_commit.get_tree_sha())
             .unwrap_or_else(|why| {
                 println!("{}", why.to_string());
                 std::process::exit(1);
             });
+
+        // Calculate differences between current state and target index
         let diff = self.diff_index(&current_commit_index, index);
+
+        // Prevent overwriting untracked files
         for (file, status) in diff.iter() {
             if let IndexDiffType::RightOnly = status {
                 let path = self.dir.join(file);
@@ -328,19 +363,22 @@ impl Repository {
             }
         }
 
+        // Apply changes to working directory
         for (file, status) in diff.iter() {
             let path = self.dir.join(file);
             match status {
                 IndexDiffType::LeftOnly => {
+                    // Remove deleted files
                     if let Err(why) = fs::remove_file(&path) {
                         println!("Cannot remove {}: {}", &path.to_str().unwrap(), why);
                     }
+                    // Clean up empty parent directories
                     if let Some(dir) = path.parent() {
-                        // Remove empty dir
                         let _ = fs::remove_dir(dir);
                     }
                 }
                 IndexDiffType::RightOnly | IndexDiffType::Modified => {
+                    // Write new/changed files
                     if let Some(sha) = index.get_sha1(file) {
                         let blob_data = self.obj_db.retrieve(sha).unwrap_or_else(|why| {
                             println!("{}", why.to_string());
@@ -350,17 +388,16 @@ impl Repository {
                             println!("{}", why.to_string());
                             std::process::exit(1);
                         });
-                        match path.parent() {
-                            Some(dir) => {
-                                if !dir.is_dir() {
-                                    if let Err(why) = fs::create_dir_all(dir) {
-                                        println!("{}", why.to_string());
-                                        std::process::exit(1);
-                                    }
+                        // Ensure parent directories exist
+                        if let Some(dir) = path.parent() {
+                            if !dir.is_dir() {
+                                if let Err(why) = fs::create_dir_all(dir) {
+                                    println!("{}", why.to_string());
+                                    std::process::exit(1);
                                 }
                             }
-                            None => (),
                         }
+                        // Write file contents
                         let mut file = File::create(path).unwrap_or_else(|why| {
                             println!("{}", why.to_string());
                             std::process::exit(1);
@@ -376,17 +413,28 @@ impl Repository {
         }
     }
 
+    /// Checks out a branch by updating HEAD and working directory
+    ///
+    /// # Arguments
+    /// * `branch_name` - Name of the branch to check out
     fn checkout(&self, branch_name: &str) {
+        // Load branch metadata
         let branch =
             Branch::load(&self.git_dir.join(REFS_DIR).join(HEADS_DIR), branch_name).unwrap();
         let commit_sha = branch.commit_sha;
+
+        // Load commit data
         let commit_data = self.obj_db.retrieve(commit_sha).unwrap();
         let commit = Commit::deserialize(&commit_data).unwrap();
+
+        // Build index from commit's tree
         let tree_sha = commit.get_tree_sha();
         let index = self.read_tree(tree_sha).unwrap_or_else(|why| {
             println!("{why}");
             std::process::exit(1);
         });
+
+        // Save index state and update working directory
         index
             .save(&self.git_dir.join(INDEX_FILE))
             .unwrap_or_else(|why| {
@@ -395,26 +443,42 @@ impl Repository {
             });
     }
 
+    /// Recursively collects all file entries from a tree object
+    ///
+    /// # Arguments
+    /// * `tree_sha` - SHA1 hash of the tree object to process
+    ///
+    /// # Returns
+    /// Tuple containing:
+    /// - Vector of relative file paths
+    /// - Vector of corresponding SHA1 hashes
     fn collect_tree_files(
         &self,
         tree_sha: &EncodedSha,
     ) -> Result<(Vec<PathBuf>, Vec<EncodedSha>), String> {
+        // Retrieve and deserialize tree object
         let tree_data = self
             .obj_db
             .retrieve(tree_sha)
             .map_err(|why| why.to_string())?;
         let tree = Tree::deserialize(&tree_data).map_err(|why| why.to_string())?;
+
         let mut path_vec: Vec<PathBuf> = Vec::new();
         let mut sha_vec: Vec<EncodedSha> = Vec::new();
+
+        // Process each entry in the tree
         for (name, entry) in tree.get_entries() {
             match entry.object_type {
                 ObjectType::Blob => {
+                    // Add file entry directly
                     path_vec.push(PathBuf::from_str(name).map_err(|why| why.to_string())?);
                     sha_vec.push(entry.sha1.clone());
                 }
                 ObjectType::Tree => {
+                    // Recursively process subtree
                     let (sub_tree_path_vec, sub_tree_sha_vec) =
                         self.collect_tree_files(&entry.sha1)?;
+                    // Merge subtree results with current paths
                     for sha in sub_tree_sha_vec {
                         sha_vec.push(sha);
                     }
@@ -429,7 +493,6 @@ impl Repository {
         }
         Ok((path_vec, sha_vec))
     }
-
     /// Creates a commit object from a tree SHA and parent commits,
     /// then stores it in the object database.
     ///
