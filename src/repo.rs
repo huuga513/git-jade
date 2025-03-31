@@ -18,7 +18,7 @@ const REFS_DIR: &str = "refs";
 const HEADS_DIR: &str = "heads";
 const MASTER_BRANCH_NAME: &str = "master";
 const HEAD_FILE: &str = "HEAD";
-const GIT_DIR: &str = ".git";
+const GIT_DIR: &str = ".git-rs";
 const INDEX_FILE: &str = "index";
 
 pub struct Repository {
@@ -75,11 +75,17 @@ impl Repository {
         let refs_dir = git_dir.join(REFS_DIR);
         fs::create_dir(&refs_dir).map_err(|_| "Failed to create refs directory")?;
 
+
+        // Create refs/heads directory
+        let heads_dir = refs_dir.join(HEADS_DIR);
+        fs::create_dir(&heads_dir).map_err(|_| "Failed to create heads directory")?;
+
+
         // Create HEAD file and write initial content
         let head_path = git_dir.join(HEAD_FILE);
         // e.g: refs/heads/master
         let head = Head::Symbolic(
-            Path::new(&refs_dir)
+            Path::new(REFS_DIR)
                 .join(HEADS_DIR)
                 .join(MASTER_BRANCH_NAME),
         );
@@ -351,7 +357,7 @@ impl Repository {
 
     /// Stages file changes to the index (staging area).
     /// Accepts a list of file paths and updates their entries in the index.
-    fn add<S: AsRef<String>>(&self, files: &Vec<S>) {
+    pub fn add<S: AsRef<str>>(&self, files: &Vec<S>) {
         for file in files {
             let file_path = Path::new(file.as_ref());
             self.update_index(file_path).unwrap();
@@ -459,7 +465,7 @@ impl Head {
 
         // Generate content based on state
         let content = match self {
-            Head::Symbolic(ref_path) => format!("ref: {}", ref_path.display()),
+            Head::Symbolic(ref_path) => format!("ref: {}\n", ref_path.display()),
             Head::Detached(sha) => sha.0.clone(),
         };
 

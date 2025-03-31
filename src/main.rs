@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
-use git_rs::Repository;
-use std::path::Path;
+use git_rs::{Repository, repo};
+use std::{env::current_dir, path::Path};
 
 #[derive(Parser)]
 #[command(name = "rugit")]
@@ -20,7 +20,7 @@ enum Command {
         #[clap(short = 'm', long = "message", required = true)]
         message: String,
     },
-    
+
     /// Add files to staging area
     Add {
         /// Paths to files/directories to add
@@ -60,13 +60,27 @@ fn main() {
         Command::Commit { message } => {
             println!("Commit message: {}", message);
             // Actual commit logic here
-        },
+        }
         Command::Add { paths } => {
-            println!("Adding paths: {:?}", paths);
-            // Actual add logic here
+            let repo_dir = current_dir().unwrap();
+            let repo = match Repository::open(&repo_dir) {
+                Ok(repo) => repo,
+                Err(why) => {
+                    println!("{why}");
+                    std::process::exit(-1);
+                }
+            };
+            repo.add(&paths);
         }
         Command::Init => {
-            println!("Initializing empty repository");
+            let current_dir = current_dir().unwrap();
+            let _ = match Repository::init(&current_dir) {
+                Ok(repo) => repo,
+                Err(why) => {
+                    println!("{why}");
+                    std::process::exit(-1);
+                }
+            };
         }
         Command::Branch { name, delete } => {
             if delete {
