@@ -138,7 +138,7 @@ HEAD 不属于 git object，所以其自身提供了 save 和 load 方法，给�
 接受一个 tree obj 的 sha 作为参数，实现分为两步：
 1. read-tree https://git-scm.com/docs/git-read-tree
    1. 将 `tree-sha` 提供的 tree 信息读取到 index 中，但不会实际更新它所“缓存”的任何文件。
-2. checkout-index 将 index 中列出的所有文件复制到工作目录（不覆盖现有文件）。
+2. checkout-index 将 index 中列出的所有文件复制到工作目录（不覆盖现有文件）。If a working file is untracked in the current branch and would be overwritten by the checkout, print There is an untracked file in the way; delete it, or add and commit it first. and exit; perform this check before doing anything else. 
 3. 将 HEAD 设定为 checkout 的 branch
 
 ## git branch

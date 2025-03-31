@@ -70,7 +70,7 @@ pub fn determine_object_type(data: &[u8]) -> Result<ObjectType, String> {
 }
 #[derive(Debug)]
 pub struct Blob {
-    data: Vec<u8>,
+    pub data: Vec<u8>,
 }
 
 impl Object for Blob {
@@ -178,6 +178,9 @@ pub struct TreeEntry {
     pub name: String,
 }
 impl Tree {
+    pub fn get_entries(&self) -> impl Iterator<Item = (&String, &TreeEntry)> {
+        self.entries.iter()
+    }
     pub fn get_object_type<S: AsRef<str>>(&self, filename: S) -> Option<ObjectType> {
         let filename = filename.as_ref();
         let entry = match self.entries.get(filename) {

@@ -7,8 +7,11 @@ use super::index::{Index, TreeNode};
 use super::object::{Blob, ObjectDB, ObjectType, Tree};
 use core::error;
 use std::collections::HashMap;
+use std::collections::btree_set::Difference;
 use std::error::Error;
 use std::fmt::format;
+use std::fs::{DirBuilder, File};
+use std::io::Write;
 use std::os::unix::process;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -26,6 +29,18 @@ pub struct Repository {
     git_dir: PathBuf,  // Path to the git directory ({dir}/{GIT_DIR}).
     work_dir: PathBuf, // Path to the current working directory.
     obj_db: ObjectDB,
+}
+/// Represents the difference status between two index entries
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IndexDiffType {
+    /// Entry exists only in the left/index
+    LeftOnly,
+    /// Entry exists only in the right/index
+    RightOnly,
+    /// Entry exists in both but has differences
+    Modified,
+    /// Entry exists in both with identical content
+    Unmodified,
 }
 
 impl Repository {
@@ -245,6 +260,176 @@ impl Repository {
         let sha = self.obj_db.store(&tree).map_err(|why| why.to_string())?;
         Ok(sha)
     }
+
+    /// Create index from tree
+    fn read_tree(&self, tree_root: EncodedSha) -> Result<Index, String> {
+        let mut index = Index::new();
+        let (path_vec, sha_vec) = self.collect_tree_files(&tree_root)?;
+        debug_assert_eq!(path_vec.len(), sha_vec.len());
+        let mut i = 0;
+        for sha in sha_vec.into_iter() {
+            index.update_entry(&path_vec[i], sha);
+            i += 1;
+        }
+        Ok(index)
+    }
+
+    fn diff_index(&self, lhs: &Index, rhs: &Index) -> HashMap<String, IndexDiffType> {
+        let mut diff: HashMap<String, IndexDiffType> = HashMap::new();
+        for (name, _) in lhs.collect_entries() {
+            diff.insert(name, IndexDiffType::LeftOnly);
+        }
+        for (name, _) in rhs.collect_entries() {
+            diff.entry(name.clone())
+                .and_modify(|status| {
+                    *status = if lhs.get_sha1(&name).unwrap() == rhs.get_sha1(&name).unwrap() {
+                        IndexDiffType::Unmodified
+                    } else {
+                        IndexDiffType::Modified
+                    }
+                })
+                .or_insert(IndexDiffType::RightOnly);
+        }
+        diff
+    }
+
+    fn checkout_index(&self, index: &Index) {
+        let current_commit_sha = self.get_current_commit().unwrap_or_else(|| {
+            println!("Failed to fetch current commit");
+            std::process::exit(1);
+        });
+        let current_commit_data = self
+            .obj_db
+            .retrieve(current_commit_sha)
+            .unwrap_or_else(|why| {
+                println!("{}", why.to_string());
+                std::process::exit(1);
+            });
+        let current_commit = Commit::deserialize(&current_commit_data).unwrap_or_else(|why| {
+            println!("{}", why.to_string());
+            std::process::exit(1);
+        });
+        let current_commit_index = self
+            .read_tree(current_commit.get_tree_sha())
+            .unwrap_or_else(|why| {
+                println!("{}", why.to_string());
+                std::process::exit(1);
+            });
+        let diff = self.diff_index(&current_commit_index, index);
+        for (file, status) in diff.iter() {
+            if let IndexDiffType::RightOnly = status {
+                let path = self.dir.join(file);
+                if path.exists() {
+                    println!(
+                        "There is an untracked file in the way; delete it, or add and commit it first."
+                    );
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        for (file, status) in diff.iter() {
+            let path = self.dir.join(file);
+            match status {
+                IndexDiffType::LeftOnly => {
+                    if let Err(why) = fs::remove_file(&path) {
+                        println!("Cannot remove {}: {}", &path.to_str().unwrap(), why);
+                    }
+                    if let Some(dir) = path.parent() {
+                        // Remove empty dir
+                        let _ = fs::remove_dir(dir);
+                    }
+                }
+                IndexDiffType::RightOnly | IndexDiffType::Modified => {
+                    if let Some(sha) = index.get_sha1(file) {
+                        let blob_data = self.obj_db.retrieve(sha).unwrap_or_else(|why| {
+                            println!("{}", why.to_string());
+                            std::process::exit(1);
+                        });
+                        let blob = Blob::deserialize(&blob_data).unwrap_or_else(|why| {
+                            println!("{}", why.to_string());
+                            std::process::exit(1);
+                        });
+                        match path.parent() {
+                            Some(dir) => {
+                                if !dir.is_dir() {
+                                    if let Err(why) = fs::create_dir_all(dir) {
+                                        println!("{}", why.to_string());
+                                        std::process::exit(1);
+                                    }
+                                }
+                            }
+                            None => (),
+                        }
+                        let mut file = File::create(path).unwrap_or_else(|why| {
+                            println!("{}", why.to_string());
+                            std::process::exit(1);
+                        });
+                        file.write_all(&blob.data).unwrap_or_else(|why| {
+                            println!("{}", why.to_string());
+                            std::process::exit(1);
+                        })
+                    }
+                }
+                IndexDiffType::Unmodified => (),
+            }
+        }
+    }
+
+    fn checkout(&self, branch_name: &str) {
+        let branch =
+            Branch::load(&self.git_dir.join(REFS_DIR).join(HEADS_DIR), branch_name).unwrap();
+        let commit_sha = branch.commit_sha;
+        let commit_data = self.obj_db.retrieve(commit_sha).unwrap();
+        let commit = Commit::deserialize(&commit_data).unwrap();
+        let tree_sha = commit.get_tree_sha();
+        let index = self.read_tree(tree_sha).unwrap_or_else(|why| {
+            println!("{why}");
+            std::process::exit(1);
+        });
+        index
+            .save(&self.git_dir.join(INDEX_FILE))
+            .unwrap_or_else(|why| {
+                println!("{why}");
+                std::process::exit(1);
+            });
+    }
+
+    fn collect_tree_files(
+        &self,
+        tree_sha: &EncodedSha,
+    ) -> Result<(Vec<PathBuf>, Vec<EncodedSha>), String> {
+        let tree_data = self
+            .obj_db
+            .retrieve(tree_sha)
+            .map_err(|why| why.to_string())?;
+        let tree = Tree::deserialize(&tree_data).map_err(|why| why.to_string())?;
+        let mut path_vec: Vec<PathBuf> = Vec::new();
+        let mut sha_vec: Vec<EncodedSha> = Vec::new();
+        for (name, entry) in tree.get_entries() {
+            match entry.object_type {
+                ObjectType::Blob => {
+                    path_vec.push(PathBuf::from_str(name).map_err(|why| why.to_string())?);
+                    sha_vec.push(entry.sha1.clone());
+                }
+                ObjectType::Tree => {
+                    let (sub_tree_path_vec, sub_tree_sha_vec) =
+                        self.collect_tree_files(&entry.sha1)?;
+                    for sha in sub_tree_sha_vec {
+                        sha_vec.push(sha);
+                    }
+                    for path in sub_tree_path_vec {
+                        path_vec.push(Path::new(name).join(path));
+                    }
+                }
+                ObjectType::Commit => {
+                    return Err(format!("Commit type should not appear in a tree"));
+                }
+            }
+        }
+        Ok((path_vec, sha_vec))
+    }
+
     /// Creates a commit object from a tree SHA and parent commits,
     /// then stores it in the object database.
     ///
@@ -369,7 +554,7 @@ impl Repository {
     pub fn commit<S: AsRef<str>>(&self, message: S) {
         // Convert the message to a string reference
         let message = message.as_ref();
-        
+
         // Validate commit message is not empty
         if message.len() == 0 {
             println!("Please enter a commit message.");
@@ -378,21 +563,21 @@ impl Repository {
 
         // Generate tree object from current index
         let tree = self.write_tree().unwrap();
-        
+
         // Hardcoded author information (would normally be configurable)
         let author_name = "Alice";
         let author_email = "alice@wonderland.edu";
-        
+
         // Get parent commit if exists
         let parent = self.get_current_commit();
-        
+
         // Create commit object, handling parent commit logic
         let commit_sha = match parent {
             Some(parent_sha) => {
                 // Retrieve parent commit data from object database
                 let parent_commit_data = self.obj_db.retrieve(&parent_sha).unwrap();
                 let parent_commit = Commit::deserialize(&parent_commit_data).unwrap();
-                
+
                 // Prevent empty commits by comparing tree hashes
                 if tree == parent_commit.get_tree_sha() {
                     println!("No changes added to the commit.");
@@ -419,7 +604,7 @@ impl Repository {
                     name: path.file_name().unwrap().to_string_lossy().to_string(),
                     commit_sha: commit_sha,
                 };
-                
+
                 // Save updated branch reference
                 branch
                     .save(&self.git_dir.join(path.parent().unwrap()))
