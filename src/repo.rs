@@ -367,45 +367,69 @@ impl Repository {
     /// - Updates HEAD reference (branch pointer or detached commit)
     /// Exits process if no changes detected or message is empty.
     pub fn commit<S: AsRef<str>>(&self, message: S) {
+        // Convert the message to a string reference
         let message = message.as_ref();
+        
+        // Validate commit message is not empty
         if message.len() == 0 {
             println!("Please enter a commit message.");
             std::process::exit(0);
         }
+
+        // Generate tree object from current index
         let tree = self.write_tree().unwrap();
+        
+        // Hardcoded author information (would normally be configurable)
         let author_name = "Alice";
         let author_email = "alice@wonderland.edu";
+        
+        // Get parent commit if exists
         let parent = self.get_current_commit();
+        
+        // Create commit object, handling parent commit logic
         let commit_sha = match parent {
             Some(parent_sha) => {
+                // Retrieve parent commit data from object database
                 let parent_commit_data = self.obj_db.retrieve(&parent_sha).unwrap();
                 let parent_commit = Commit::deserialize(&parent_commit_data).unwrap();
+                
+                // Prevent empty commits by comparing tree hashes
                 if tree == parent_commit.get_tree_sha() {
                     println!("No changes added to the commit.");
                     std::process::exit(0);
                 } else {
+                    // Create commit with parent reference
                     self.commit_tree(tree, vec![parent_sha], message, author_name, author_email)
                         .unwrap()
                 }
             }
+            // Initial commit (no parent)
             None => self
                 .commit_tree(tree, vec![], message, author_name, author_email)
                 .unwrap(),
         };
+
+        // Update HEAD reference
         let head = self.get_head().unwrap();
         let new_head = match &head {
+            // Handle branch reference (symbolic HEAD)
             Head::Symbolic(path) => {
+                // Create branch object with new commit
                 let branch = Branch {
                     name: path.file_name().unwrap().to_string_lossy().to_string(),
                     commit_sha: commit_sha,
                 };
+                
+                // Save updated branch reference
                 branch
                     .save(&self.git_dir.join(path.parent().unwrap()))
                     .unwrap();
                 head
             }
+            // Handle detached HEAD state
             Head::Detached(_) => Head::Detached(commit_sha),
         };
+        // Persist HEAD state to file
         new_head.save(&self.git_dir.join(HEAD_FILE)).unwrap();
     }
 }
