@@ -29,6 +29,28 @@ enum Command {
     },
     /// Initialize a new repository
     Init,
+    /// Manage branches
+    Branch {
+        /// Name of the branch
+        #[clap(value_name = "NAME", required = true)]
+        name: String,
+
+        /// Delete the branch
+        #[clap(short = 'd', long = "delete")]
+        delete: bool,
+    },
+    /// Switch branches or restore working tree files
+    Checkout {
+        /// Target branch/commit to checkout
+        #[clap(value_name = "TARGET", required = true)]
+        target: String,
+    },
+    /// Merge another branch into current branch
+    Merge {
+        /// Branch name to merge
+        #[clap(value_name = "BRANCH", required = true)]
+        branch: String,
+    },
 }
 
 fn main() {
@@ -45,6 +67,19 @@ fn main() {
         }
         Command::Init => {
             println!("Initializing empty repository");
+        }
+        Command::Branch { name, delete } => {
+            if delete {
+                println!("Deleting branch '{}'", name);
+            } else {
+                println!("Creating branch '{}'", name);
+            }
+        }
+        Command::Checkout { target } => {
+            println!("Checking out to: {}", target);
+        }
+        Command::Merge { branch } => {
+            println!("Merging branch: {}", branch);
         }
     }
 }
