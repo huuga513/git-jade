@@ -425,13 +425,13 @@ impl Repository {
                         println!("Failed to ture to str");
                         std::process::exit(1);
                     });
+                println!("On branch {branch_name}");
                 let branch =
                     Branch::load(&self.git_dir.join(REFS_DIR).join(HEADS_DIR), branch_name)
                         .unwrap_or_else(|why| {
-                            println!("Branch {branch_name} doesn't exist");
-                            std::process::exit(1);
+                            println!("No commits yet.");
+                            std::process::exit(0);
                         });
-                println!("On branch {branch_name}");
                 branch.commit_sha
             }
             Head::Detached(commit_sha) => {
