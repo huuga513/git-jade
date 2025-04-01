@@ -661,8 +661,6 @@ impl Repository {
             commit_sha: current_commit,
         };
         branch.save(&branch_dir).unwrap();
-        let head = Head::Symbolic(Path::new(REFS_DIR).join(HEADS_DIR).join(branch.name));
-        head.save(&self.git_dir.join(HEAD_FILE)).unwrap();
     }
 
     /// Deletes an existing branch.
