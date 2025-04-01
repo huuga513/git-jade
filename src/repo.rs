@@ -407,6 +407,75 @@ impl Repository {
             }
         }
     }
+    pub fn status(&self) {
+        let head = self.get_head().unwrap_or_else(|| {
+            println!("Failed to fetch head");
+            std::process::exit(1);
+        });
+        let commit_sha = match head {
+            Head::Symbolic(path_buf) => {
+                let branch_name = path_buf
+                    .file_name()
+                    .unwrap_or_else(|| {
+                        println!("Failed to get branch name");
+                        std::process::exit(1);
+                    })
+                    .to_str()
+                    .unwrap_or_else(|| {
+                        println!("Failed to ture to str");
+                        std::process::exit(1);
+                    });
+                let branch =
+                    Branch::load(&self.git_dir.join(REFS_DIR).join(HEADS_DIR), branch_name)
+                        .unwrap_or_else(|why| {
+                            println!("Branch {branch_name} doesn't exist");
+                            std::process::exit(1);
+                        });
+                println!("On branch {branch_name}");
+                branch.commit_sha
+            }
+            Head::Detached(commit_sha) => {
+                println!("HEAD detached at {commit_sha}");
+                commit_sha
+            }
+        };
+        let current_commit_data = self.obj_db.retrieve(&commit_sha).unwrap_or_else(|why| {
+            println!("commit {commit_sha} doesn't exist: {why}");
+            std::process::exit(1);
+        });
+        let current_commit = Commit::deserialize(&current_commit_data).unwrap_or_else(|why| {
+            println!("{why}");
+            std::process::exit(1);
+        });
+        let index = Index::load(&self.git_dir.join(INDEX_FILE)).unwrap_or_else(|why| {
+            println!("cannot find index: {why}");
+            std::process::exit(1);
+        });
+        // Build index from current commit's tree
+        let current_commit_index = self
+            .read_tree(current_commit.get_tree_sha())
+            .unwrap_or_else(|why| {
+                println!("{}", why.to_string());
+                std::process::exit(1);
+            });
+
+        // Calculate differences between current state and target index
+        let diff = self.diff_index(&current_commit_index, &index);
+        for (name, status) in diff {
+            match status {
+                IndexDiffType::LeftOnly => {
+                    println!("Deleted: {name}");
+                },
+                IndexDiffType::RightOnly => {
+                    println!("New: {name}");
+                },
+                IndexDiffType::Modified => {
+                    println!("Modified: {name}");
+                },
+                IndexDiffType::Unmodified => (),
+            }
+        }
+    }
 
     /// Checks out a branch by updating HEAD and working directory
     ///

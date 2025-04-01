@@ -29,6 +29,8 @@ enum Command {
     },
     /// Initialize a new repository
     Init,
+    /// Print the status
+    Status,
     /// Manage branches
     Branch {
         /// Name of the branch
@@ -113,6 +115,11 @@ fn main() {
         }
         Command::Merge { branch } => {
             println!("Merging branch: {}", branch);
+        }
+        Command::Status => {
+            let repo_dir = find_repo_dir();
+            let repo = open_repo(&repo_dir);
+            repo.status();
         }
     }
 }
