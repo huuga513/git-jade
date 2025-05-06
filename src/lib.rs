@@ -4,7 +4,7 @@ pub use repo::Repository;
 mod index;
 mod object;
 pub mod repo;
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct EncodedSha(String);
 impl EncodedSha {
     fn from_string(string: String) -> EncodedSha {

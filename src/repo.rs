@@ -1,11 +1,11 @@
 use chrono::{FixedOffset, Utc};
 
-use crate::object::{Author, Commit};
+use crate::object::{Author, Commit, Object};
 
 use super::EncodedSha;
 use super::index::{Index, TreeNode};
 use super::object::{Blob, ObjectDB, ObjectType, Tree};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -465,13 +465,13 @@ impl Repository {
             match status {
                 IndexDiffType::LeftOnly => {
                     println!("Deleted: {name}");
-                },
+                }
                 IndexDiffType::RightOnly => {
                     println!("New: {name}");
-                },
+                }
                 IndexDiffType::Modified => {
                     println!("Modified: {name}");
-                },
+                }
                 IndexDiffType::Unmodified => (),
             }
         }
@@ -485,8 +485,8 @@ impl Repository {
         let current_commit_index = self.read_tree(current_commit.get_tree_sha()).unwrap();
         let diff = self.diff_index(&current_commit_index, &index);
         for (_, status) in diff {
-            if let IndexDiffType::Unmodified = status {}
-            else {
+            if let IndexDiffType::Unmodified = status {
+            } else {
                 println!("You have uncommitted changes.");
                 std::process::exit(1);
             }
@@ -496,18 +496,62 @@ impl Repository {
             Err(_) => {
                 println!("A branch with that name does not exist.");
                 std::process::exit(1);
-            },
+            }
         };
         if branch.commit_sha == current_commit_sha {
             println!("Cannot merge a branch with itself.");
             std::process::exit(1);
         }
         let commit_data = self.obj_db.retrieve(branch.commit_sha).unwrap();
-
     }
 
-    fn find_lca(lhs: &Commit, rhs: &Commit) {
-        
+    fn find_lca(&self, lhs: &EncodedSha, rhs: &EncodedSha) -> Option<EncodedSha> {
+        let get_first_parent = |commit: &Commit| match commit.get_parents().first() {
+            Some(encoded_sha) => Some(encoded_sha.clone()),
+            None => None,
+        };
+        // Mark ancestors of lhs
+        let mut ancestors = HashSet::new();
+        let mut current = lhs.0.clone();
+        loop {
+            // Load commit data
+            let commit_data = self
+                .obj_db
+                .retrieve(EncodedSha::from_string(current.clone()))
+                .unwrap();
+            let commit = Commit::deserialize(&commit_data).unwrap();
+            ancestors.insert(current);
+            if commit.get_parents().is_empty() {
+                break;
+            }
+            current = match get_first_parent(&commit) {
+                Some(encoded_sha) => encoded_sha.0.clone(),
+                None => break, // Handle missing parent (e.g., invalid commit)
+            };
+        }
+        // Traverse rhs ancestors to find LCA
+        let mut current_rhs = rhs.0.clone();
+        loop {
+            // Check if current rhs commit is in lhs' ancestors
+            if ancestors.contains(&current_rhs) {
+                return Some(EncodedSha::from_string(current_rhs));
+            }
+
+            // Move to parent commit
+            let commit_data = self
+                .obj_db
+                .retrieve(EncodedSha::from_string(current_rhs.clone()))
+                .unwrap();
+            let commit = Commit::deserialize(&commit_data).unwrap();
+
+            match get_first_parent(&commit) {
+                Some(parent_sha) => current_rhs = parent_sha.0,
+                None => {
+                    break;
+                } // Reached root commit
+            };
+        }
+        None
     }
 
     /// Checks out a branch by updating HEAD and working directory
