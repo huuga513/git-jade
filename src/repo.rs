@@ -502,7 +502,41 @@ impl Repository {
             println!("Cannot merge a branch with itself.");
             std::process::exit(1);
         }
-        let commit_data = self.obj_db.retrieve(branch.commit_sha).unwrap();
+        let lca = match self.find_lca(&current_commit_sha, &branch.commit_sha) {
+            Some(encoded_sha) => encoded_sha,
+            None => {
+                println!("Cannot find lca of {} and {}", &current_commit_sha, &branch.commit_sha);
+                std::process::exit(1);
+            }
+        };
+        if lca.eq(&current_commit_sha) {
+            self.fast_forward(branch_name);
+            println!("Current branch fast-forwarded.");
+            return;
+        }
+        if lca.eq(&branch.commit_sha) {
+            println!("Given branch is an ancestor of the current branch.");
+            return;
+        }
+        
+    }
+
+    fn fast_forward(&self, target_branch_name:&str) {
+        let head = self.get_head().unwrap();
+        let target_branch = self.load_branch(target_branch_name).unwrap();
+        let branch_dir = self.get_branch_dir();
+        self.checkout(target_branch_name);
+        if let Head::Symbolic(p) = head {
+            let current_branch = Branch::load(&self.git_dir.join(&p), p.file_name().unwrap().to_str().unwrap()).unwrap();
+            let current_branch = Branch {
+                commit_sha: target_branch.commit_sha,
+                ..current_branch
+            };
+            if let Err(why) = current_branch.save(&branch_dir) {
+                println!("Failed to save current branch: {why}");
+                std::process::exit(1);
+            }
+        }
     }
 
     fn find_lca(&self, lhs: &EncodedSha, rhs: &EncodedSha) -> Option<EncodedSha> {
@@ -553,16 +587,25 @@ impl Repository {
         }
         None
     }
+    fn load_branch(&self, branch_name: &str) -> Option<Branch> {
+        // Load branch metadata
+        let branch = match Branch::load(&self.git_dir.join(REFS_DIR).join(HEADS_DIR), branch_name) {
+            Ok(branch) => Some(branch),
+            Err(_) => {
+                None
+            }
+        };
+        branch
+    }
 
     /// Checks out a branch by updating HEAD and working directory
     ///
     /// # Arguments
     /// * `branch_name` - Name of the branch to check out
     pub fn checkout(&self, branch_name: &str) {
-        // Load branch metadata
-        let branch = match Branch::load(&self.git_dir.join(REFS_DIR).join(HEADS_DIR), branch_name) {
-            Ok(branch) => branch,
-            Err(_) => {
+        let branch = match self.load_branch(branch_name) {
+            Some(b) => b,
+            None => {
                 println!("No such branch exists.");
                 std::process::exit(1);
             }
@@ -719,12 +762,16 @@ impl Repository {
         }
     }
 
+    fn get_branch_dir(&self) -> PathBuf {
+        self.git_dir.join(REFS_DIR).join(HEADS_DIR)
+    }
+
     /// Creates a new branch pointing to the current commit.
     /// - Checks for existing branch name conflicts
     /// - Exits process if branch already exists
     /// - Saves new branch reference in .git/refs/heads/
     pub fn branch<S: AsRef<str>>(&self, name: S) {
-        let branch_dir = self.git_dir.join(REFS_DIR).join(HEADS_DIR);
+        let branch_dir = self.get_branch_dir();
         match Branch::load(&branch_dir, name.as_ref()) {
             Ok(_) => {
                 println!("A branch with that name already exists.");
