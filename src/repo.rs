@@ -734,6 +734,11 @@ impl Repository {
                 }
             }
         }
+        // TODO: output change line num
+        /* Example:
+        Merge conflicit in test.txt: 1 
+        Merge conflicit in test.txt: [3, 5] 
+        Merge conflicit in test.txt: [7, 9]  */
         let blob = Blob {
             data: merged_content.into(),
         };
