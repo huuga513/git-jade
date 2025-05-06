@@ -5,6 +5,7 @@ use crate::object::{Author, Commit, Object};
 use super::EncodedSha;
 use super::index::{Index, TreeNode};
 use super::object::{Blob, ObjectDB, ObjectType, Tree};
+use similar::{ChangeTag, DiffableStr, TextDiff};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Write;
@@ -18,6 +19,8 @@ const MASTER_BRANCH_NAME: &str = "master";
 const HEAD_FILE: &str = "HEAD";
 const GIT_DIR: &str = ".git-rs";
 const INDEX_FILE: &str = "index";
+const AUTHOR_NAME: &str = "Alice";
+const AUTHOR_EMAIL: &str = "alice@wonderland.edu";
 
 pub struct Repository {
     dir: PathBuf,      // Path to the repository directory.
@@ -539,30 +542,228 @@ impl Repository {
 
         let diff_lca_cur = self.diff_index(&lca_index, &current_commit_index);
         let diff_lca_branch = self.diff_index(&lca_index, &branch_index);
-        for (file_path, status) in diff_lca_branch {
-            match status {
-                IndexDiffType::LeftOnly => {
-                    if *diff_lca_cur.get(&file_path).unwrap() == IndexDiffType::Modified {
-                        // 2. Any files that have been modified in the current branch 
-                        // but not in the given branch since the split point should stay as they are.
-                        continue;
+        let mut has_conflict = false;
+
+        // Collect all unique files from both diffs
+        let all_files: HashSet<_> = diff_lca_cur
+            .keys()
+            .chain(diff_lca_branch.keys())
+            .cloned()
+            .collect();
+
+        // Merge logic for each file
+        for file_path in all_files {
+            let cur_status = diff_lca_cur.get(&file_path);
+            let branch_status = diff_lca_branch.get(&file_path);
+
+            if cur_status.is_some() && branch_status.is_some() {
+                let cur_status = cur_status.unwrap();
+                let branch_status = branch_status.unwrap();
+                match (cur_status, branch_status) {
+                    // Both modified differently - Conflict
+                    // 8 Any files modified in different ways in the current and given branches are in conflict.
+                    // 8.1 the contents of both are changed and different from other.
+                    // 8.3 the file was absent at the split point and has different
+                    // contents in the given and current branches.
+                    (IndexDiffType::Modified, IndexDiffType::Modified)
+                    | (IndexDiffType::RightOnly, IndexDiffType::RightOnly) => {
+                        let cur_sha = current_commit_index.get_sha1(&file_path).unwrap();
+                        let branch_sha = branch_index.get_sha1(&file_path).unwrap();
+                        // 3. Any files that have been modified in both the current and given branch in the same way
+                        // are left unchanged by the merge.
+                        // 3.1. Both files now have the same content
+                        if cur_sha != branch_sha {
+                            self.handle_conflict(
+                                Path::new(&file_path),
+                                cur_sha,
+                                branch_sha,
+                                &mut index,
+                            );
+                            has_conflict = true;
+                        }
                     }
-                },
-                IndexDiffType::RightOnly => todo!(),
-                IndexDiffType::Modified => {
-                    // 1. Any files that have been modified in the given branch since the split point,
-                    // but not modified in the current branch since the split point 
-                    // should be changed to their versions in the given branch
-                    if *diff_lca_cur.get(&file_path).unwrap() == IndexDiffType::Unmodified {
-                        index.update_entry(
+
+                    // Current deleted, branch modified (or vice versa) - Conflict
+                    // 8.2 the contents of one are changed and the other file is deleted
+                    (IndexDiffType::LeftOnly, IndexDiffType::Modified)
+                    | (IndexDiffType::Modified, IndexDiffType::LeftOnly) => {
+                        self.handle_deletion_conflict(
                             &file_path,
-                            branch_index.get_sha1(&file_path).unwrap().clone(),
+                            cur_status,
+                            branch_status,
+                            &mut index,
                         );
+                        has_conflict = true;
                     }
+
+                    // 1. Any files that have been modified in the given branch since the split point,
+                    // but not modified in the current branch since the split point should be changed to their versions in the given branch
+                    (IndexDiffType::Unmodified, IndexDiffType::Modified) => {
+                        let sha = branch_index.get_sha1(&file_path).unwrap();
+                        index.update_entry(&file_path, sha.clone());
+                    }
+
+                    // 2. Any files that have been modified in the current branch but not in the given branch
+                    // since the split point should stay as they are.
+                    (IndexDiffType::Modified, IndexDiffType::Unmodified) => (),
+
+                    // 3.2 Both files were both removed are left unchanged by the merge.
+                    (IndexDiffType::LeftOnly, IndexDiffType::LeftOnly) => (),
+
+                    // 6. Any files present at the split point, unmodified in the current branch,
+                    // and absent in the given branch should be removed (and untracked).
+                    (IndexDiffType::Unmodified, IndexDiffType::LeftOnly) => {
+                        index.remove_entry(&file_path);
+                    }
+
+                    // 7. Any files present at the split point, unmodified in the given branch,
+                    // and absent in the current branch should remain absent.
+                    (IndexDiffType::LeftOnly, IndexDiffType::Unmodified) => (),
+
+                    // Other cases
+                    _ => (),
                 }
-                IndexDiffType::Unmodified => todo!(),
+            }
+            if branch_status.is_none() {
+                let cur_status = cur_status.unwrap();
+                match cur_status {
+                    // 4. Any files that were not present at the split point and are present only in the current branch
+                    // should remain as they are.
+                    IndexDiffType::RightOnly => (),
+                    _ => unreachable!(),
+                }
+            }
+            if cur_status.is_none() {
+                let branch_status = branch_status.unwrap();
+                // 5. Any files that were not present at the split point
+                // and are present only in the given branch should be checked out and staged.
+                match branch_status {
+                    IndexDiffType::RightOnly => {
+                        let sha = branch_index.get_sha1(&file_path).unwrap();
+                        index.update_entry(file_path, sha.clone());
+                    }
+                    _ => unreachable!(),
+                }
             }
         }
+
+        // Write merged index and create commit
+        index.save(&self.get_index_path());
+        let tree_sha = self.write_tree().unwrap();
+        let parents = vec![current_commit_sha, branch.commit_sha.clone()];
+        let commit_sha = self
+            .commit_tree(
+                tree_sha,
+                parents,
+                &format!("Merge {}", branch_name),
+                AUTHOR_NAME,
+                AUTHOR_EMAIL,
+            )
+            .unwrap();
+        self.update_head(commit_sha);
+        if has_conflict {
+            println!("Encountered a merge conflict.");
+        }
+    }
+
+    fn load_blob(&self, encoded_sha: &EncodedSha) -> Blob {
+        let blob_data = self.obj_db.retrieve(encoded_sha).unwrap();
+        let blob = Blob::deserialize(&blob_data).unwrap();
+        blob
+    }
+
+    // Helper to handle content conflicts
+    fn handle_conflict(
+        &self,
+        path: &Path,
+        cur_blob_sha: &EncodedSha,
+        branch_blob_sha: &EncodedSha,
+        index: &mut Index,
+    ) {
+        let cur_content = String::from_utf8(self.load_blob(cur_blob_sha).data).unwrap();
+        let branch_content = String::from_utf8(self.load_blob(branch_blob_sha).data).unwrap();
+
+        let diff = TextDiff::from_lines(&cur_content, &branch_content);
+        let mut merged_content = String::new();
+        let get_conflict_text = |cur_text, branch_text| {
+            format!("<<<<<<< HEAD\n{}=======\n{}>>>>>>>", cur_text, branch_text)
+        };
+
+        for op in diff.ops() {
+            match op {
+                similar::DiffOp::Equal {
+                    old_index,
+                    new_index,
+                    len,
+                } => {
+                    let old_slice = cur_content.slice(*old_index..old_index+len);
+                    merged_content += old_slice;
+                }
+                similar::DiffOp::Delete {
+                    old_index,
+                    old_len,
+                    new_index,
+                } => {
+                    let old_slice = cur_content.slice(*old_index..old_index+old_len);
+                    let merged_text = get_conflict_text(old_slice, "");
+                    merged_content += &merged_text;
+                },
+                similar::DiffOp::Insert {
+                    old_index,
+                    new_index,
+                    new_len,
+                } => {
+                    let new_slice = branch_content.slice(*new_index..new_index+new_len);
+                    let merged_text = get_conflict_text("", new_slice);
+                    merged_content += &merged_text;
+                },
+                similar::DiffOp::Replace {
+                    old_index,
+                    old_len,
+                    new_index,
+                    new_len,
+                } => {
+                    let old_slice = cur_content.slice(*old_index..old_index+old_len);
+                    let new_slice = branch_content.slice(*new_index..new_index+new_len);
+                    let merged_text = get_conflict_text(old_slice, new_slice);
+                    merged_content += &merged_text;
+                },
+            }
+        }
+        let blob = Blob {
+            data: merged_content.into(),
+        };
+        let blob_sha = self.obj_db.store(&blob).unwrap();
+        index.update_entry(path, blob_sha);
+    }
+
+    // Helper to handle deletion conflicts
+    fn handle_deletion_conflict(
+        &self,
+        path: &str,
+        cur_status: &IndexDiffType,
+        branch_status: &IndexDiffType,
+        index: &mut Index,
+    ) {
+        let (cur_content, branch_content) = match (cur_status, branch_status) {
+            (IndexDiffType::LeftOnly, _) => (
+                "",
+                self.get_blob_content(branch_index.get_sha1(path).unwrap()),
+            ),
+            (_, IndexDiffType::LeftOnly) => (
+                self.get_blob_content(current_commit_index.get_sha1(path).unwrap()),
+                "",
+            ),
+            _ => unreachable!(),
+        };
+
+        let merged = format!(
+            "<<<<<<< HEAD\n{}=======\n{}>>>>>>>\n",
+            cur_content, branch_content
+        );
+        self.write_workdir_file(path, &merged);
+        let blob_sha = self.hash_object(&merged, "blob").unwrap();
+        index.update_entry(path, blob_sha);
     }
 
     fn fast_forward(&self, target_branch_name: &str) {
@@ -880,8 +1081,8 @@ impl Repository {
         let tree = self.write_tree().unwrap();
 
         // Hardcoded author information (would normally be configurable)
-        let author_name = "Alice";
-        let author_email = "alice@wonderland.edu";
+        let author_name = AUTHOR_NAME;
+        let author_email = AUTHOR_EMAIL;
 
         // Get parent commit if exists
         let parent = self.get_current_commit();
@@ -908,7 +1109,9 @@ impl Repository {
                 .commit_tree(tree, vec![], message, author_name, author_email)
                 .unwrap(),
         };
-
+        self.update_head(commit_sha);
+    }
+    fn update_head(&self, commit_sha: EncodedSha) {
         // Update HEAD reference
         let head = self.get_head().unwrap();
         let new_head = match &head {
