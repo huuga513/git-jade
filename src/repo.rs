@@ -263,7 +263,7 @@ impl Repository {
     ///
     /// # Returns
     /// Result containing the populated Index or error string
-    fn read_tree(&self, tree_root: EncodedSha) -> Result<Index, String> {
+    fn read_tree(&self, tree_root: &EncodedSha) -> Result<Index, String> {
         // Initialize empty index
         let mut index = Index::new();
 
@@ -336,7 +336,7 @@ impl Repository {
 
         // Build index from current commit's tree
         let current_commit_index = self
-            .read_tree(current_commit.get_tree_sha())
+            .read_tree(&current_commit.get_tree_sha())
             .unwrap_or_else(|why| {
                 println!("{}", why.to_string());
                 std::process::exit(1);
@@ -453,7 +453,7 @@ impl Repository {
         });
         // Build index from current commit's tree
         let current_commit_index = self
-            .read_tree(current_commit.get_tree_sha())
+            .read_tree(&current_commit.get_tree_sha())
             .unwrap_or_else(|why| {
                 println!("{}", why.to_string());
                 std::process::exit(1);
@@ -477,12 +477,22 @@ impl Repository {
         }
     }
 
+    fn load_commit(&self, encoded_sha: &EncodedSha) -> Commit {
+        let data = self.obj_db.retrieve(encoded_sha).unwrap();
+        let commit = Commit::deserialize(&data).unwrap();
+        commit
+    }
+
+    fn get_index_path(&self) -> PathBuf {
+        self.git_dir.join(INDEX_FILE)
+    }
+
     pub fn merge(&self, branch_name: &str) {
         let current_commit_sha = self.get_current_commit().unwrap();
-        let index = Index::load(&self.git_dir.join(INDEX_FILE)).unwrap();
+        let mut index = Index::load(&self.get_index_path()).unwrap();
         let current_commit_data = self.obj_db.retrieve(&current_commit_sha).unwrap();
         let current_commit = Commit::deserialize(&current_commit_data).unwrap();
-        let current_commit_index = self.read_tree(current_commit.get_tree_sha()).unwrap();
+        let current_commit_index = self.read_tree(&current_commit.get_tree_sha()).unwrap();
         let diff = self.diff_index(&current_commit_index, &index);
         for (_, status) in diff {
             if let IndexDiffType::Unmodified = status {
@@ -505,7 +515,10 @@ impl Repository {
         let lca = match self.find_lca(&current_commit_sha, &branch.commit_sha) {
             Some(encoded_sha) => encoded_sha,
             None => {
-                println!("Cannot find lca of {} and {}", &current_commit_sha, &branch.commit_sha);
+                println!(
+                    "Cannot find lca of {} and {}",
+                    &current_commit_sha, &branch.commit_sha
+                );
                 std::process::exit(1);
             }
         };
@@ -518,16 +531,51 @@ impl Repository {
             println!("Given branch is an ancestor of the current branch.");
             return;
         }
-        
+
+        let branch_commit = self.load_commit(&branch.commit_sha);
+        let branch_index = self.read_tree(&branch.commit_sha).unwrap();
+        let lca_commit = self.load_commit(&lca);
+        let lca_index = self.read_tree(&lca).unwrap();
+
+        let diff_lca_cur = self.diff_index(&lca_index, &current_commit_index);
+        let diff_lca_branch = self.diff_index(&lca_index, &branch_index);
+        for (file_path, status) in diff_lca_branch {
+            match status {
+                IndexDiffType::LeftOnly => {
+                    if *diff_lca_cur.get(&file_path).unwrap() == IndexDiffType::Modified {
+                        // 2. Any files that have been modified in the current branch 
+                        // but not in the given branch since the split point should stay as they are.
+                        continue;
+                    }
+                },
+                IndexDiffType::RightOnly => todo!(),
+                IndexDiffType::Modified => {
+                    // 1. Any files that have been modified in the given branch since the split point,
+                    // but not modified in the current branch since the split point 
+                    // should be changed to their versions in the given branch
+                    if *diff_lca_cur.get(&file_path).unwrap() == IndexDiffType::Unmodified {
+                        index.update_entry(
+                            &file_path,
+                            branch_index.get_sha1(&file_path).unwrap().clone(),
+                        );
+                    }
+                }
+                IndexDiffType::Unmodified => todo!(),
+            }
+        }
     }
 
-    fn fast_forward(&self, target_branch_name:&str) {
+    fn fast_forward(&self, target_branch_name: &str) {
         let head = self.get_head().unwrap();
         let target_branch = self.load_branch(target_branch_name).unwrap();
         let branch_dir = self.get_branch_dir();
         self.checkout(target_branch_name);
         if let Head::Symbolic(p) = head {
-            let current_branch = Branch::load(&self.git_dir.join(&p), p.file_name().unwrap().to_str().unwrap()).unwrap();
+            let current_branch = Branch::load(
+                &self.git_dir.join(&p),
+                p.file_name().unwrap().to_str().unwrap(),
+            )
+            .unwrap();
             let current_branch = Branch {
                 commit_sha: target_branch.commit_sha,
                 ..current_branch
@@ -591,9 +639,7 @@ impl Repository {
         // Load branch metadata
         let branch = match Branch::load(&self.git_dir.join(REFS_DIR).join(HEADS_DIR), branch_name) {
             Ok(branch) => Some(branch),
-            Err(_) => {
-                None
-            }
+            Err(_) => None,
         };
         branch
     }
@@ -626,7 +672,7 @@ impl Repository {
 
         // Build index from commit's tree
         let tree_sha = commit.get_tree_sha();
-        let index = self.read_tree(tree_sha).unwrap_or_else(|why| {
+        let index = self.read_tree(&tree_sha).unwrap_or_else(|why| {
             println!("{why}");
             std::process::exit(1);
         });
