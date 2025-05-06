@@ -477,6 +477,39 @@ impl Repository {
         }
     }
 
+    pub fn merge(&self, branch_name: &str) {
+        let current_commit_sha = self.get_current_commit().unwrap();
+        let index = Index::load(&self.git_dir.join(INDEX_FILE)).unwrap();
+        let current_commit_data = self.obj_db.retrieve(&current_commit_sha).unwrap();
+        let current_commit = Commit::deserialize(&current_commit_data).unwrap();
+        let current_commit_index = self.read_tree(current_commit.get_tree_sha()).unwrap();
+        let diff = self.diff_index(&current_commit_index, &index);
+        for (_, status) in diff {
+            if let IndexDiffType::Unmodified = status {}
+            else {
+                println!("You have uncommitted changes.");
+                std::process::exit(1);
+            }
+        }
+        let branch = match Branch::load(&self.git_dir.join(REFS_DIR).join(HEADS_DIR), branch_name) {
+            Ok(branch) => branch,
+            Err(_) => {
+                println!("A branch with that name does not exist.");
+                std::process::exit(1);
+            },
+        };
+        if branch.commit_sha == current_commit_sha {
+            println!("Cannot merge a branch with itself.");
+            std::process::exit(1);
+        }
+        let commit_data = self.obj_db.retrieve(branch.commit_sha).unwrap();
+
+    }
+
+    fn find_lca(lhs: &Commit, rhs: &Commit) {
+        
+    }
+
     /// Checks out a branch by updating HEAD and working directory
     ///
     /// # Arguments
