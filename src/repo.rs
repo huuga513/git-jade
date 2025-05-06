@@ -587,10 +587,15 @@ impl Repository {
                     // 8.2 the contents of one are changed and the other file is deleted
                     (IndexDiffType::LeftOnly, IndexDiffType::Modified)
                     | (IndexDiffType::Modified, IndexDiffType::LeftOnly) => {
+                        let (blob_sha, is_cur_content) = if let IndexDiffType::LeftOnly = cur_status {
+                            (branch_index.get_sha1(&file_path).unwrap(), false)
+                        } else {
+                            (current_commit_index.get_sha1(&file_path).unwrap(), true)
+                        };
                         self.handle_deletion_conflict(
-                            &file_path,
-                            cur_status,
-                            branch_status,
+                            Path::new(&file_path),
+                            blob_sha,
+                            is_cur_content,
                             &mut index,
                         );
                         has_conflict = true;
@@ -648,7 +653,10 @@ impl Repository {
         }
 
         // Write merged index and create commit
-        index.save(&self.get_index_path());
+        if let Err(why) = index.save(&self.get_index_path()) {
+            println!("{why}");
+            std::process::exit(1);
+        }
         let tree_sha = self.write_tree().unwrap();
         let parents = vec![current_commit_sha, branch.commit_sha.clone()];
         let commit_sha = self
@@ -672,17 +680,13 @@ impl Repository {
         blob
     }
 
-    // Helper to handle content conflicts
-    fn handle_conflict(
+    fn handle_conflict_text(
         &self,
         path: &Path,
-        cur_blob_sha: &EncodedSha,
-        branch_blob_sha: &EncodedSha,
+        cur_content: String,
+        branch_content: String,
         index: &mut Index,
     ) {
-        let cur_content = String::from_utf8(self.load_blob(cur_blob_sha).data).unwrap();
-        let branch_content = String::from_utf8(self.load_blob(branch_blob_sha).data).unwrap();
-
         let diff = TextDiff::from_lines(&cur_content, &branch_content);
         let mut merged_content = String::new();
         let get_conflict_text = |cur_text, branch_text| {
@@ -696,7 +700,7 @@ impl Repository {
                     new_index,
                     len,
                 } => {
-                    let old_slice = cur_content.slice(*old_index..old_index+len);
+                    let old_slice = cur_content.slice(*old_index..old_index + len);
                     merged_content += old_slice;
                 }
                 similar::DiffOp::Delete {
@@ -704,30 +708,30 @@ impl Repository {
                     old_len,
                     new_index,
                 } => {
-                    let old_slice = cur_content.slice(*old_index..old_index+old_len);
+                    let old_slice = cur_content.slice(*old_index..old_index + old_len);
                     let merged_text = get_conflict_text(old_slice, "");
                     merged_content += &merged_text;
-                },
+                }
                 similar::DiffOp::Insert {
                     old_index,
                     new_index,
                     new_len,
                 } => {
-                    let new_slice = branch_content.slice(*new_index..new_index+new_len);
+                    let new_slice = branch_content.slice(*new_index..new_index + new_len);
                     let merged_text = get_conflict_text("", new_slice);
                     merged_content += &merged_text;
-                },
+                }
                 similar::DiffOp::Replace {
                     old_index,
                     old_len,
                     new_index,
                     new_len,
                 } => {
-                    let old_slice = cur_content.slice(*old_index..old_index+old_len);
-                    let new_slice = branch_content.slice(*new_index..new_index+new_len);
+                    let old_slice = cur_content.slice(*old_index..old_index + old_len);
+                    let new_slice = branch_content.slice(*new_index..new_index + new_len);
                     let merged_text = get_conflict_text(old_slice, new_slice);
                     merged_content += &merged_text;
-                },
+                }
             }
         }
         let blob = Blob {
@@ -737,35 +741,35 @@ impl Repository {
         index.update_entry(path, blob_sha);
     }
 
+    // Helper to handle content conflicts
+    fn handle_conflict(
+        &self,
+        path: &Path,
+        cur_blob_sha: &EncodedSha,
+        branch_blob_sha: &EncodedSha,
+        index: &mut Index,
+    ) {
+        let cur_content = String::from_utf8(self.load_blob(cur_blob_sha).data).unwrap();
+        let branch_content = String::from_utf8(self.load_blob(branch_blob_sha).data).unwrap();
+        self.handle_conflict_text(path, cur_content, branch_content, index);
+    }
+
     // Helper to handle deletion conflicts
     fn handle_deletion_conflict(
         &self,
-        path: &str,
-        cur_status: &IndexDiffType,
-        branch_status: &IndexDiffType,
+        path: &Path,
+        blob_sha: &EncodedSha,
+        is_cur_content: bool,
         index: &mut Index,
     ) {
-        let (cur_content, branch_content) = match (cur_status, branch_status) {
-            (IndexDiffType::LeftOnly, _) => (
-                "",
-                self.get_blob_content(branch_index.get_sha1(path).unwrap()),
-            ),
-            (_, IndexDiffType::LeftOnly) => (
-                self.get_blob_content(current_commit_index.get_sha1(path).unwrap()),
-                "",
-            ),
-            _ => unreachable!(),
+        let content = String::from_utf8(self.load_blob(blob_sha).data).unwrap();
+        let (cur_content, branch_content) = if is_cur_content {
+            (content, String::new())
+        } else {
+            (String::new(), content)
         };
-
-        let merged = format!(
-            "<<<<<<< HEAD\n{}=======\n{}>>>>>>>\n",
-            cur_content, branch_content
-        );
-        self.write_workdir_file(path, &merged);
-        let blob_sha = self.hash_object(&merged, "blob").unwrap();
-        index.update_entry(path, blob_sha);
+        self.handle_conflict_text(path, cur_content, branch_content, index);
     }
-
     fn fast_forward(&self, target_branch_name: &str) {
         let head = self.get_head().unwrap();
         let target_branch = self.load_branch(target_branch_name).unwrap();
