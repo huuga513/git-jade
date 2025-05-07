@@ -431,17 +431,22 @@ impl Repository {
                 println!("On branch {branch_name}");
                 let branch =
                     Branch::load(&self.git_dir.join(REFS_DIR).join(HEADS_DIR), branch_name)
-                        .unwrap_or_else(|why| {
-                            println!("No commits yet.");
-                            std::process::exit(0);
+                        .unwrap_or_else(|| {
+                            println!("Failed to load branch");
+                            std::process::exit(1);
                         });
                 branch.commit_sha
             }
             Head::Detached(commit_sha) => {
                 println!("HEAD detached at {commit_sha}");
-                commit_sha
+                Some(commit_sha)
             }
         };
+        if commit_sha.is_none() {
+            println!("No commits yet");
+            std::process::exit(0);
+        }
+        let commit_sha = commit_sha.unwrap();
         let current_commit_data = self.obj_db.retrieve(&commit_sha).unwrap_or_else(|why| {
             println!("commit {commit_sha} doesn't exist: {why}");
             std::process::exit(1);
@@ -505,22 +510,27 @@ impl Repository {
             }
         }
         let branch = match Branch::load(&self.git_dir.join(REFS_DIR).join(HEADS_DIR), branch_name) {
-            Ok(branch) => branch,
-            Err(_) => {
+            Some(branch) => branch,
+            None => {
                 println!("A branch with that name does not exist.");
                 std::process::exit(1);
             }
         };
-        if branch.commit_sha == current_commit_sha {
+        if branch.commit_sha.is_none() {
+            println!("There is no commit in branch {}", &branch.name);
+            std::process::exit(1);
+        }
+        let branch_commit_sha = branch.commit_sha.unwrap();
+        if branch_commit_sha == current_commit_sha {
             println!("Cannot merge a branch with itself.");
             std::process::exit(1);
         }
-        let lca = match self.find_lca(&current_commit_sha, &branch.commit_sha) {
+        let lca = match self.find_lca(&current_commit_sha, &branch_commit_sha) {
             Some(encoded_sha) => encoded_sha,
             None => {
                 println!(
                     "Cannot find lca of {} and {}",
-                    &current_commit_sha, &branch.commit_sha
+                    &current_commit_sha, &branch_commit_sha
                 );
                 std::process::exit(1);
             }
@@ -530,13 +540,13 @@ impl Repository {
             println!("Current branch fast-forwarded.");
             return;
         }
-        if lca.eq(&branch.commit_sha) {
+        if lca.eq(&branch_commit_sha) {
             println!("Given branch is an ancestor of the current branch.");
             return;
         }
 
-        let branch_commit = self.load_commit(&branch.commit_sha);
-        let branch_index = self.read_tree(&branch.commit_sha).unwrap();
+        let branch_commit = self.load_commit(&branch_commit_sha);
+        let branch_index = self.read_tree(&branch_commit_sha).unwrap();
         let lca_commit = self.load_commit(&lca);
         let lca_index = self.read_tree(&lca).unwrap();
 
@@ -658,7 +668,7 @@ impl Repository {
             std::process::exit(1);
         }
         let tree_sha = self.write_tree().unwrap();
-        let parents = vec![current_commit_sha, branch.commit_sha.clone()];
+        let parents = vec![current_commit_sha, branch_commit_sha.clone()];
         let commit_sha = self
             .commit_tree(
                 tree_sha,
@@ -847,10 +857,7 @@ impl Repository {
     }
     fn load_branch(&self, branch_name: &str) -> Option<Branch> {
         // Load branch metadata
-        let branch = match Branch::load(&self.git_dir.join(REFS_DIR).join(HEADS_DIR), branch_name) {
-            Ok(branch) => Some(branch),
-            Err(_) => None,
-        };
+        let branch = Branch::load(&self.git_dir.join(REFS_DIR).join(HEADS_DIR), branch_name);
         branch
     }
 
@@ -874,7 +881,15 @@ impl Repository {
                 }
             }
         }
+
+        let head = Head::Symbolic(Path::new(REFS_DIR).join(HEADS_DIR).join(branch.name));
+        head.save(&self.git_dir.join(HEAD_FILE)).unwrap();
+
         let commit_sha = branch.commit_sha;
+        if commit_sha.is_none() {
+            return;
+        }
+        let commit_sha = commit_sha.unwrap();
 
         // Load commit data
         let commit_data = self.obj_db.retrieve(commit_sha).unwrap();
@@ -897,8 +912,6 @@ impl Repository {
                 std::process::exit(1);
             });
 
-        let head = Head::Symbolic(Path::new(REFS_DIR).join(HEADS_DIR).join(branch.name));
-        head.save(&self.git_dir.join(HEAD_FILE)).unwrap();
     }
 
     /// Recursively collects all file entries from a tree object
@@ -1010,8 +1023,12 @@ impl Repository {
                     branch_path.file_name().unwrap().to_str().unwrap(),
                 );
                 match branch_result {
-                    Ok(branch) => Some(branch.commit_sha),
-                    Err(_) => None,
+                    Some(branch) => {
+                        branch.commit_sha
+                    }, 
+                    None => {
+                        panic!("No such branch exists!");
+                    }
                 }
             }
             Head::Detached(encoded_sha) => Some(encoded_sha),
@@ -1029,18 +1046,13 @@ impl Repository {
     pub fn branch<S: AsRef<str>>(&self, name: S) {
         let branch_dir = self.get_branch_dir();
         match Branch::load(&branch_dir, name.as_ref()) {
-            Ok(_) => {
+            Some(_) => {
                 println!("A branch with that name already exists.");
                 std::process::exit(0);
             }
-            Err(_) => {}
+            None => {}
         };
-        let current_commit = match self.get_current_commit() {
-            Some(sha) => sha,
-            None => {
-               // TODO: handle branch command when no commit 
-            },
-        }
+        let current_commit = self.get_current_commit();
         let branch = Branch {
             name: name.as_ref().to_string(),
             commit_sha: current_commit,
@@ -1134,7 +1146,7 @@ impl Repository {
                 // Create branch object with new commit
                 let branch = Branch {
                     name: path.file_name().unwrap().to_string_lossy().to_string(),
-                    commit_sha: commit_sha,
+                    commit_sha: Some(commit_sha),
                 };
 
                 // Save updated branch reference
@@ -1154,7 +1166,7 @@ impl Repository {
 #[derive(Debug)]
 struct Branch {
     name: String,
-    commit_sha: EncodedSha,
+    commit_sha: Option<EncodedSha>,
 }
 
 impl Branch {
@@ -1165,16 +1177,19 @@ impl Branch {
         if let Some(parent) = file_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(file_path, self.commit_sha.to_string())
+        if let Some(encoded_sha) = &self.commit_sha {
+            fs::write(file_path, encoded_sha.to_string());
+        }
+        Ok(())
     }
 
     /// load branch from base_path/name
-    pub fn load(base_path: &Path, name: &str) -> io::Result<Self> {
+    pub fn load(base_path: &Path, name: &str) -> Option<Branch> {
         let file_path = base_path.join(name);
-        let content = fs::read_to_string(file_path)?;
+        let content = fs::read_to_string(file_path).ok()?;
         let commit_str = content.trim();
-        let commit = EncodedSha::from_str(commit_str).map_err(|_| io::ErrorKind::InvalidData)?;
-        Ok(Self {
+        let commit = EncodedSha::from_str(commit_str).ok();
+        Some(Self {
             name: name.to_string(),
             commit_sha: commit,
         })
@@ -1452,7 +1467,7 @@ mod branch_tests {
         // Construct a test branch
         let branch = Branch {
             name: "test-branch".to_string(),
-            commit_sha: EncodedSha("a".repeat(40)),
+            commit_sha: Some(EncodedSha("a".repeat(40))),
         };
 
         // Test saving the branch
@@ -1469,7 +1484,7 @@ mod branch_tests {
         // Test loading the branch
         let loaded_branch = Branch::load(base_path, "test-branch").unwrap();
         assert_eq!(loaded_branch.name, "test-branch");
-        assert_eq!(loaded_branch.commit_sha.to_string(), "a".repeat(40));
+        assert_eq!(loaded_branch.commit_sha.unwrap().to_string(), "a".repeat(40));
     }
 
     #[test]
@@ -1480,7 +1495,7 @@ mod branch_tests {
 
         let branch = Branch {
             name: "deep-branch".to_string(),
-            commit_sha: EncodedSha("b".repeat(40)),
+            commit_sha: Some(EncodedSha("b".repeat(40))),
         };
 
         // Save to a multi-level directory
@@ -1497,8 +1512,7 @@ mod branch_tests {
         let temp_dir = TempDir::new().unwrap();
         let result = Branch::load(temp_dir.path(), "ghost-branch");
 
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::NotFound);
+        assert!(result.is_none());
     }
 
     #[test]
@@ -1512,8 +1526,8 @@ mod branch_tests {
 
         let result = Branch::load(temp_dir.path(), "invalid-branch");
 
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert!(result.is_some());
+        assert!(result.unwrap().commit_sha.is_none());
     }
     #[test]
     fn test_remove_existing_branch() -> io::Result<()> {
