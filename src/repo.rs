@@ -1,6 +1,7 @@
 use chrono::{FixedOffset, Utc};
 
 use crate::object::{Author, Commit, Object};
+use walkdir::WalkDir;
 
 use super::EncodedSha;
 use super::index::{Index, TreeNode};
@@ -599,7 +600,8 @@ impl Repository {
                     // 8.2 the contents of one are changed and the other file is deleted
                     (IndexDiffType::LeftOnly, IndexDiffType::Modified)
                     | (IndexDiffType::Modified, IndexDiffType::LeftOnly) => {
-                        let (blob_sha, is_cur_content) = if let IndexDiffType::LeftOnly = cur_status {
+                        let (blob_sha, is_cur_content) = if let IndexDiffType::LeftOnly = cur_status
+                        {
                             (branch_index.get_sha1(&file_path).unwrap(), false)
                         } else {
                             (current_commit_index.get_sha1(&file_path).unwrap(), true)
@@ -748,8 +750,8 @@ impl Repository {
         }
         // TODO: output change line num
         /* Example:
-        Merge conflicit in test.txt: 1 
-        Merge conflicit in test.txt: [3, 5] 
+        Merge conflicit in test.txt: 1
+        Merge conflicit in test.txt: [3, 5]
         Merge conflicit in test.txt: [7, 9]  */
         let blob = Blob {
             data: merged_content.into(),
@@ -913,7 +915,6 @@ impl Repository {
                 println!("{why}");
                 std::process::exit(1);
             });
-
     }
 
     /// Recursively collects all file entries from a tree object
@@ -1025,9 +1026,7 @@ impl Repository {
                     branch_path.file_name().unwrap().to_str().unwrap(),
                 );
                 match branch_result {
-                    Some(branch) => {
-                        branch.commit_sha
-                    }, 
+                    Some(branch) => branch.commit_sha,
                     None => None,
                 }
             }
@@ -1082,9 +1081,26 @@ impl Repository {
     /// Stages file changes to the index (staging area).
     /// Accepts a list of file paths and updates their entries in the index.
     pub fn add<S: AsRef<str>>(&self, files: &Vec<S>) {
+        let add_single_file = |p: &Path| {
+            self.update_index(p).unwrap_or_else(|why| {
+                println!("{why}");
+                std::process::exit(1);
+            })
+        };
         for file in files {
             let file_path = Path::new(file.as_ref());
-            self.update_index(file_path).unwrap();
+            if file_path.is_dir() {
+                for entry in WalkDir::new(file_path)
+                    .into_iter()
+                    .filter_map(|e| e.ok())
+                    .filter(|f| f.file_type().is_file())
+                    .filter(|f| self.is_file_path_vaild(f.path()))
+                {
+                    add_single_file(entry.path());
+                }
+            } else {
+                add_single_file(file_path);
+            }
         }
     }
 
@@ -1486,7 +1502,10 @@ mod branch_tests {
         // Test loading the branch
         let loaded_branch = Branch::load(base_path, "test-branch").unwrap();
         assert_eq!(loaded_branch.name, "test-branch");
-        assert_eq!(loaded_branch.commit_sha.unwrap().to_string(), "a".repeat(40));
+        assert_eq!(
+            loaded_branch.commit_sha.unwrap().to_string(),
+            "a".repeat(40)
+        );
     }
 
     #[test]
