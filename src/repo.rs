@@ -1178,7 +1178,9 @@ impl Branch {
             fs::create_dir_all(parent)?;
         }
         if let Some(encoded_sha) = &self.commit_sha {
-            fs::write(file_path, encoded_sha.to_string());
+            fs::write(file_path, encoded_sha.to_string())?;
+        } else {
+            fs::write(file_path, "No commit")?;
         }
         Ok(())
     }
