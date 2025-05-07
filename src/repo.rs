@@ -889,32 +889,32 @@ impl Repository {
         let head = Head::Symbolic(Path::new(REFS_DIR).join(HEADS_DIR).join(branch.name));
 
         let commit_sha = branch.commit_sha;
-        if commit_sha.is_none() {
-            return;
-        }
-        let commit_sha = commit_sha.unwrap();
+        if commit_sha.is_some() {
 
-        // Load commit data
-        let commit_data = self.obj_db.retrieve(commit_sha).unwrap();
-        let commit = Commit::deserialize(&commit_data).unwrap();
+            let commit_sha = commit_sha.unwrap();
 
-        // Build index from commit's tree
-        let tree_sha = commit.get_tree_sha();
-        let index = self.read_tree(&tree_sha).unwrap_or_else(|why| {
-            println!("{why}");
-            std::process::exit(1);
-        });
+            // Load commit data
+            let commit_data = self.obj_db.retrieve(commit_sha).unwrap();
+            let commit = Commit::deserialize(&commit_data).unwrap();
 
-        self.checkout_index(&index);
-
-        head.save(&self.git_dir.join(HEAD_FILE)).unwrap();
-        // Save index state and update working directory
-        index
-            .save(&self.git_dir.join(INDEX_FILE))
-            .unwrap_or_else(|why| {
+            // Build index from commit's tree
+            let tree_sha = commit.get_tree_sha();
+            let index = self.read_tree(&tree_sha).unwrap_or_else(|why| {
                 println!("{why}");
                 std::process::exit(1);
             });
+            // Update working directory
+            self.checkout_index(&index);
+
+            // Save index state
+            index
+                .save(&self.git_dir.join(INDEX_FILE))
+                .unwrap_or_else(|why| {
+                    println!("{why}");
+                    std::process::exit(1);
+                });
+        }
+        head.save(&self.git_dir.join(HEAD_FILE)).unwrap();
     }
 
     /// Recursively collects all file entries from a tree object
