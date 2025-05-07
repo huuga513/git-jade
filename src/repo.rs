@@ -17,7 +17,7 @@ const REFS_DIR: &str = "refs";
 const HEADS_DIR: &str = "heads";
 const MASTER_BRANCH_NAME: &str = "master";
 const HEAD_FILE: &str = "HEAD";
-const GIT_DIR: &str = ".git-rs";
+const GIT_DIR: &str = ".git";
 const INDEX_FILE: &str = "index";
 const AUTHOR_NAME: &str = "Alice";
 const AUTHOR_EMAIL: &str = "alice@wonderland.edu";
@@ -1035,7 +1035,12 @@ impl Repository {
             }
             Err(_) => {}
         };
-        let current_commit = self.get_current_commit().unwrap();
+        let current_commit = match self.get_current_commit() {
+            Some(sha) => sha,
+            None => {
+               // TODO: handle branch command when no commit 
+            },
+        }
         let branch = Branch {
             name: name.as_ref().to_string(),
             commit_sha: current_commit,

@@ -1,9 +1,9 @@
 use clap::{Parser, Subcommand};
-use git_rs::Repository;
+use rust_git::Repository;
 use std::{env::current_dir, path::{Path, PathBuf}};
 
 #[derive(Parser)]
-#[command(name = "rugit")]
+#[command(name = "rust-git")]
 #[command(version = "1.0")]
 #[command(about = "A simple Git client written in Rust", long_about = None)]
 #[derive(Debug)]
@@ -46,6 +46,10 @@ enum Command {
         /// Target branch/commit to checkout
         #[clap(value_name = "TARGET", required = true)]
         target: String,
+
+        /// Create a branch
+        #[clap(short = 'b')]
+        create: bool,
     },
     /// Merge another branch into current branch
     Merge {
@@ -106,10 +110,13 @@ fn main() {
                 repo.branch(name);
             }
         }
-        Command::Checkout { target } => {
-            println!("Checking out to: {}", target);
+        Command::Checkout { target , create} => {
             let repo_dir = find_repo_dir();
             let repo = open_repo(&repo_dir);
+            if create {
+                repo.branch(&target);
+            }
+            println!("Checking out to: {}", target);
             repo.checkout(&target);
 
         }
