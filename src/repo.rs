@@ -5,7 +5,7 @@ use crate::object::{Author, Commit, Object};
 use super::EncodedSha;
 use super::index::{Index, TreeNode};
 use super::object::{Blob, ObjectDB, ObjectType, Tree};
-use similar::{ChangeTag, DiffableStr, TextDiff};
+use similar::{DiffableStr, TextDiff};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Write;
