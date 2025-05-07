@@ -1,4 +1,5 @@
 use chrono::{FixedOffset, Utc};
+use line_diff::line_diff;
 
 use crate::object::{Author, Commit, Object};
 use walkdir::WalkDir;
@@ -23,6 +24,110 @@ const INDEX_FILE: &str = "index";
 const AUTHOR_NAME: &str = "Alice";
 const AUTHOR_EMAIL: &str = "alice@wonderland.edu";
 
+mod line_diff {
+    pub fn line_diff(a: &str, b: &str) -> Vec<bool> {
+        let a_lines: Vec<&str> = a.split('\n').collect();
+        let b_lines: Vec<&str> = b.split('\n').collect();
+        let max_len = std::cmp::max(a_lines.len(), b_lines.len());
+        (0..max_len)
+            .map(|i| a_lines.get(i) == b_lines.get(i))
+            .collect()
+    }
+    pub fn group_ranges(bools: &[bool]) -> Vec<(usize, usize, bool)> {
+        let mut result = Vec::new();
+        if bools.is_empty() {
+            return result;
+        }
+
+        let mut current_start = 0;
+        let mut current_value = bools[0];
+
+        for (i, &value) in bools.iter().enumerate().skip(1) {
+            if value != current_value {
+                result.push((current_start, i - 1, current_value));
+                current_start = i;
+                current_value = value;
+            }
+        }
+
+        result.push((current_start, bools.len() - 1, current_value));
+        result
+    }
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_line_diff_basic() {
+            let a = "hello\nworld\n2023";
+            let b = "hello\nworld\n2023";
+            assert_eq!(line_diff(a, b), vec![true, true, true]);
+
+            let a = "Rust\nis\nfast";
+            let b = "Rust\nis\nslow";
+            assert_eq!(line_diff(a, b), vec![true, true, false]);
+
+            let a = "line1\nline2";
+            let b = "line1";
+            assert_eq!(line_diff(a, b), vec![true, false]);
+        }
+
+        #[test]
+        fn test_line_diff_edge_cases() {
+            assert_eq!(line_diff("", ""), vec![true] as Vec<bool>);
+            assert_eq!(line_diff("text", ""), vec![false]);
+            assert_eq!(line_diff("", "text"), vec![false]);
+
+            let a = "first\n\nthird";
+            let b = "first\nsecond\nthird";
+            assert_eq!(line_diff(a, b), vec![true, false, true]);
+        }
+
+        #[test]
+        fn test_group_ranges_normal() {
+            let bools = vec![true, true, false, false, true];
+            assert_eq!(
+                group_ranges(&bools),
+                vec![(0,1,true), (2,3,false), (4,4,true)]
+            );
+
+            let all_true = vec![true; 5];
+            assert_eq!(
+                group_ranges(&all_true),
+                vec![(0,4,true)]
+            );
+        }
+
+        #[test]
+        fn test_group_ranges_special() {
+            assert_eq!(group_ranges(&[true]), vec![(0,0,true)]);
+            assert_eq!(group_ranges(&[false]), vec![(0,0,false)]);
+
+            let empty: Vec<bool> = Vec::new();
+            assert!(group_ranges(&empty).is_empty());
+
+            let alternating = vec![true, false, true, false];
+            assert_eq!(
+                group_ranges(&alternating),
+                vec![(0,0,true), (1,1,false), (2,2,true), (3,3,false)]
+            );
+        }
+
+        #[test]
+        fn test_integration() {
+            let a = "A\nB\nC\nD";
+            let b = "A\nX\nC\nY";
+            let diff = line_diff(a, b);
+            assert_eq!(diff, vec![true, false, true, false]);
+            
+            let groups = group_ranges(&diff);
+            assert_eq!(
+                groups,
+                vec![(0,0,true), (1,1,false), (2,2,true), (3,3,false)]
+            );
+        }
+    }
+}
 pub struct Repository {
     dir: PathBuf,      // Path to the repository directory.
     git_dir: PathBuf,  // Path to the git directory ({dir}/{GIT_DIR}).
@@ -701,58 +806,35 @@ impl Repository {
         branch_content: String,
         index: &mut Index,
     ) {
-        let diff = TextDiff::from_lines(&cur_content, &branch_content);
+        let a_lines: Vec<&str> = cur_content.split('\n').collect();
+        let diff = line_diff::line_diff(&cur_content, &branch_content);
         let mut merged_content = String::new();
-        let get_conflict_text = |cur_text, branch_text| {
+        let get_conflict_text = |cur_text:&str, branch_text:&str| {
             format!("<<<<<<< HEAD\n{}=======\n{}>>>>>>>", cur_text, branch_text)
         };
+        merged_content += &get_conflict_text(&cur_content, &branch_content);
 
-        for op in diff.ops() {
-            match op {
-                similar::DiffOp::Equal {
-                    old_index,
-                    new_index,
-                    len,
-                } => {
-                    let old_slice = cur_content.slice(*old_index..old_index + len);
-                    merged_content += old_slice;
-                }
-                similar::DiffOp::Delete {
-                    old_index,
-                    old_len,
-                    new_index,
-                } => {
-                    let old_slice = cur_content.slice(*old_index..old_index + old_len);
-                    let merged_text = get_conflict_text(old_slice, "");
-                    merged_content += &merged_text;
-                }
-                similar::DiffOp::Insert {
-                    old_index,
-                    new_index,
-                    new_len,
-                } => {
-                    let new_slice = branch_content.slice(*new_index..new_index + new_len);
-                    let merged_text = get_conflict_text("", new_slice);
-                    merged_content += &merged_text;
-                }
-                similar::DiffOp::Replace {
-                    old_index,
-                    old_len,
-                    new_index,
-                    new_len,
-                } => {
-                    let old_slice = cur_content.slice(*old_index..old_index + old_len);
-                    let new_slice = branch_content.slice(*new_index..new_index + new_len);
-                    let merged_text = get_conflict_text(old_slice, new_slice);
-                    merged_content += &merged_text;
-                }
-            }
-        }
-        // TODO: output change line num
         /* Example:
         Merge conflicit in test.txt: 1
         Merge conflicit in test.txt: [3, 5]
         Merge conflicit in test.txt: [7, 9]  */
+        for group in line_diff::group_ranges(&diff) {
+            if group.2 == true {
+                continue;
+            }
+            let start = group.0 + 1;
+            let end = group.1 + 1;
+            if start > a_lines.len() {
+                continue;
+            }
+            let end = std::cmp::min(end, a_lines.len());
+            print!("Merge conflicit in {}: ", path.file_name().unwrap().to_str().unwrap());
+            if start == end {
+                println!("{}", start);
+            } else {
+                println!("[{}, {}]", start, end);
+            }
+        }
         let blob = Blob {
             data: merged_content.into(),
         };
@@ -810,10 +892,8 @@ impl Repository {
                     std::process::exit(1);
                 }
                 Head::Symbolic(p)
-            },
-            Head::Detached(_) => {
-                Head::Detached(target_branch.commit_sha.unwrap())
-            },
+            }
+            Head::Detached(_) => Head::Detached(target_branch.commit_sha.unwrap()),
         };
         head.save(&self.git_dir.join(HEAD_FILE)).unwrap();
     }
@@ -896,7 +976,6 @@ impl Repository {
 
         let commit_sha = branch.commit_sha;
         if commit_sha.is_some() {
-
             let commit_sha = commit_sha.unwrap();
 
             // Load commit data
