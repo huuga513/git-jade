@@ -1,4 +1,4 @@
-use std::{path::Display, str::FromStr};
+use std::str::FromStr;
 
 pub use repo::Repository;
 mod index;

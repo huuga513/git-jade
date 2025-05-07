@@ -323,7 +323,7 @@ impl Object for Tree {
     }
 }
 
-use chrono::{DateTime, FixedOffset, Utc};
+use chrono::{DateTime, FixedOffset};
 use std::fmt::{Display, Formatter};
 
 /// Structure for commit author/committer information

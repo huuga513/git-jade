@@ -57,6 +57,12 @@ enum Command {
         #[clap(value_name = "BRANCH", required = true)]
         branch: String,
     },
+    /// Remove a file
+    Rm {
+        /// Paths to files/directories to remove
+        #[clap(required = true)]
+        paths: Vec<String>,
+    }
 }
 
 fn find_repo_dir() -> PathBuf {
@@ -88,6 +94,11 @@ fn main() {
             let repo_dir = find_repo_dir();
             let repo = open_repo(&repo_dir);
             repo.add(&paths);
+        }
+        Command::Rm { paths } => {
+            let repo_dir = find_repo_dir();
+            let repo = open_repo(&repo_dir);
+            repo.rm(&paths);
         }
         Command::Init => {
             let current_dir = current_dir().unwrap();

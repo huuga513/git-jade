@@ -548,9 +548,7 @@ impl Repository {
             return;
         }
 
-        let branch_commit = self.load_commit(&branch_commit_sha);
         let branch_index = self.read_tree(&branch_commit_sha).unwrap();
-        let lca_commit = self.load_commit(&lca);
         let lca_index = self.read_tree(&lca).unwrap();
 
         let diff_lca_cur = self.diff_index(&lca_index, &current_commit_index);
@@ -1106,6 +1104,42 @@ impl Repository {
                 }
             } else {
                 add_single_file(file_path);
+            }
+        }
+    }
+
+    pub fn rm<S: AsRef<str>>(&self, files: &Vec<S>) {
+        let add_single_file = |p: &Path| {
+            self.update_index(p).unwrap_or_else(|why| {
+                println!("{why}");
+                std::process::exit(1);
+            })
+        };
+        let rm_single_file = |p: &Path| {
+            let index= Index::load(&self.get_index_path()).unwrap();
+            if index.get_sha1(p).is_none() {
+                println!("fatal: pathspec '{}' did not match any files", p.to_str().unwrap());
+                std::process::exit(1);
+            }
+            if let Err(why) = fs::remove_file(p) {
+                println!("fatal: {}", why);
+                std::process::exit(1);
+            }
+            add_single_file(p);
+        };
+        for file in files {
+            let file_path = Path::new(file.as_ref());
+            if file_path.is_dir() {
+                for entry in WalkDir::new(file_path)
+                    .into_iter()
+                    .filter_map(|e| e.ok())
+                    .filter(|f| f.file_type().is_file())
+                    .filter(|f| self.is_file_path_vaild(f.path()))
+                {
+                    rm_single_file(entry.path());
+                }
+            } else {
+                rm_single_file(file_path);
             }
         }
     }
