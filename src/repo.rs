@@ -887,7 +887,6 @@ impl Repository {
         }
 
         let head = Head::Symbolic(Path::new(REFS_DIR).join(HEADS_DIR).join(branch.name));
-        head.save(&self.git_dir.join(HEAD_FILE)).unwrap();
 
         let commit_sha = branch.commit_sha;
         if commit_sha.is_none() {
@@ -908,6 +907,7 @@ impl Repository {
 
         self.checkout_index(&index);
 
+        head.save(&self.git_dir.join(HEAD_FILE)).unwrap();
         // Save index state and update working directory
         index
             .save(&self.git_dir.join(INDEX_FILE))
