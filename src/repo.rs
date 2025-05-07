@@ -1,13 +1,11 @@
 use chrono::{FixedOffset, Utc};
-use line_diff::line_diff;
 
-use crate::object::{Author, Commit, Object};
+use crate::object::{Author, Commit};
 use walkdir::WalkDir;
 
 use super::EncodedSha;
 use super::index::{Index, TreeNode};
 use super::object::{Blob, ObjectDB, ObjectType, Tree};
-use similar::{DiffableStr, TextDiff};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Write;
@@ -131,7 +129,6 @@ mod line_diff {
 pub struct Repository {
     dir: PathBuf,      // Path to the repository directory.
     git_dir: PathBuf,  // Path to the git directory ({dir}/{GIT_DIR}).
-    work_dir: PathBuf, // Path to the current working directory.
     obj_db: ObjectDB,
 }
 /// Represents the difference status between two index entries
@@ -204,7 +201,6 @@ impl Repository {
         let head = Head::Symbolic(Path::new(REFS_DIR).join(HEADS_DIR).join(MASTER_BRANCH_NAME));
         head.save(&head_path).map_err(|why| why.to_string())?;
 
-        let work_dir = env::current_dir().map_err(|_| "Failed to get current working dir")?;
         let obj_db = match ObjectDB::new(&objects_dir) {
             Ok(obj_db) => obj_db,
             Err(_) => {
@@ -214,7 +210,6 @@ impl Repository {
         let repo = Repository {
             dir: dir.to_path_buf(),
             git_dir: git_dir,
-            work_dir: work_dir,
             obj_db: obj_db,
         };
         repo.branch("master");
@@ -231,7 +226,6 @@ impl Repository {
                 git_dir.to_str().unwrap()
             ));
         }
-        let work_dir = env::current_dir().map_err(|_| "Failed to get current working dir")?;
         let objects_dir = git_dir.join(OBJECTS_DIR);
         let obj_db = match ObjectDB::new(&objects_dir) {
             Ok(obj_db) => obj_db,
@@ -242,7 +236,6 @@ impl Repository {
         Ok(Repository {
             dir: dir.to_path_buf(),
             git_dir: git_dir,
-            work_dir: work_dir,
             obj_db: obj_db,
         })
     }
