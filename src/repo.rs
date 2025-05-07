@@ -794,23 +794,29 @@ impl Repository {
         let target_branch = self.load_branch(target_branch_name).unwrap();
         let branch_dir = self.get_branch_dir();
         self.checkout(target_branch_name);
-        if let Head::Symbolic(p) = head {
-            let current_branch = Branch::load(
-                &self.git_dir.join(&p),
-                p.file_name().unwrap().to_str().unwrap(),
-            )
-            .unwrap();
-            let current_branch = Branch {
-                commit_sha: target_branch.commit_sha,
-                ..current_branch
-            };
-            if let Err(why) = current_branch.save(&branch_dir) {
-                println!("Failed to save current branch: {why}");
-                std::process::exit(1);
-            }
-        }
+        let head = match head {
+            Head::Symbolic(p) => {
+                let current_branch = Branch::load(
+                    &self.get_branch_dir(),
+                    p.file_name().unwrap().to_str().unwrap(),
+                )
+                .unwrap();
+                let current_branch = Branch {
+                    commit_sha: target_branch.commit_sha,
+                    ..current_branch
+                };
+                if let Err(why) = current_branch.save(&branch_dir) {
+                    println!("Failed to save current branch: {why}");
+                    std::process::exit(1);
+                }
+                Head::Symbolic(p)
+            },
+            Head::Detached(_) => {
+                Head::Detached(target_branch.commit_sha.unwrap())
+            },
+        };
+        head.save(&self.git_dir.join(HEAD_FILE)).unwrap();
     }
-
     fn find_lca(&self, lhs: &EncodedSha, rhs: &EncodedSha) -> Option<EncodedSha> {
         let get_first_parent = |commit: &Commit| match commit.get_parents().first() {
             Some(encoded_sha) => Some(encoded_sha.clone()),
