@@ -105,12 +105,14 @@ impl Repository {
                 return Err("Failed to create object db".to_owned());
             }
         };
-        Ok(Repository {
+        let repo = Repository {
             dir: dir.to_path_buf(),
             git_dir: git_dir,
             work_dir: work_dir,
             obj_db: obj_db,
-        })
+        };
+        repo.branch("master");
+        Ok(repo)
     }
     /// Open a repository based on the repository dir
     /// The git dir should be {dir}/{GIT_DIR}
@@ -1026,9 +1028,7 @@ impl Repository {
                     Some(branch) => {
                         branch.commit_sha
                     }, 
-                    None => {
-                        panic!("No such branch exists!");
-                    }
+                    None => None,
                 }
             }
             Head::Detached(encoded_sha) => Some(encoded_sha),
