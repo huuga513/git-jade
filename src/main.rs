@@ -122,6 +122,9 @@ fn main() {
         }
         Command::Merge { branch } => {
             println!("Merging branch: {}", branch);
+            let repo_dir = find_repo_dir();
+            let repo = open_repo(&repo_dir);
+            repo.merge(&branch); 
         }
         Command::Status => {
             let repo_dir = find_repo_dir();
