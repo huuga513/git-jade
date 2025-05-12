@@ -646,8 +646,11 @@ impl Repository {
             return;
         }
 
-        let branch_index = self.read_tree(&branch_commit_sha).unwrap();
-        let lca_index = self.read_tree(&lca).unwrap();
+        let branch_commit = self.load_commit(&branch_commit_sha);
+        let lca_commit = self.load_commit(&lca);
+
+        let branch_index = self.read_tree(&branch_commit.get_tree_sha()).unwrap();
+        let lca_index = self.read_tree(&lca_commit.get_tree_sha()).unwrap();
 
         let diff_lca_cur = self.diff_index(&lca_index, &current_commit_index);
         let diff_lca_branch = self.diff_index(&lca_index, &branch_index);
@@ -767,6 +770,8 @@ impl Repository {
             println!("{why}");
             std::process::exit(1);
         }
+        // Update work dir
+        self.checkout_index(&index);
         let tree_sha = self.write_tree().unwrap();
         let parents = vec![current_commit_sha, branch_commit_sha.clone()];
         let commit_sha = self
@@ -806,9 +811,9 @@ impl Repository {
         merged_content += &get_conflict_text(&cur_content, &branch_content);
 
         /* Example:
-        Merge conflicit in test.txt: 1
-        Merge conflicit in test.txt: [3, 5]
-        Merge conflicit in test.txt: [7, 9]  */
+        Merge conflict in test.txt: 1
+        Merge conflict in test.txt: [3, 5]
+        Merge conflict in test.txt: [7, 9]  */
         for group in line_diff::group_ranges(&diff) {
             if group.2 == true {
                 continue;
@@ -819,7 +824,7 @@ impl Repository {
                 continue;
             }
             let end = std::cmp::min(end, a_lines.len());
-            print!("Merge conflicit in {}: ", path.file_name().unwrap().to_str().unwrap());
+            print!("Merge conflict in {}: ", path.file_name().unwrap().to_str().unwrap());
             if start == end {
                 println!("{}", start);
             } else {
