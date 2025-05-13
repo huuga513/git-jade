@@ -85,7 +85,6 @@ fn main() {
 
     match args.command {
         Command::Commit { message } => {
-            println!("Commit message: {}", message);
             let repo_dir = find_repo_dir();
             let repo = open_repo(&repo_dir);
             repo.commit(message);
@@ -127,12 +126,10 @@ fn main() {
             if create {
                 repo.branch(&target);
             }
-            println!("Checking out to: {}", target);
             repo.checkout(&target);
 
         }
         Command::Merge { branch } => {
-            println!("Merging branch: {}", branch);
             let repo_dir = find_repo_dir();
             let repo = open_repo(&repo_dir);
             repo.merge(&branch); 

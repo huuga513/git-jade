@@ -783,7 +783,7 @@ impl Repository {
                 AUTHOR_EMAIL,
             )
             .unwrap();
-        self.update_head(commit_sha);
+        self.update_head(&commit_sha);
         if has_conflict {
             println!("Encountered a merge conflict.");
         }
@@ -1268,9 +1268,10 @@ impl Repository {
                 .commit_tree(tree, vec![], message, author_name, author_email)
                 .unwrap(),
         };
-        self.update_head(commit_sha);
+        self.update_head(&commit_sha);
+        eprintln!("{}", &commit_sha.0);
     }
-    fn update_head(&self, commit_sha: EncodedSha) {
+    fn update_head(&self, commit_sha: &EncodedSha) {
         // Update HEAD reference
         let head = self.get_head().unwrap();
         let new_head = match &head {
@@ -1279,7 +1280,7 @@ impl Repository {
                 // Create branch object with new commit
                 let branch = Branch {
                     name: path.file_name().unwrap().to_string_lossy().to_string(),
-                    commit_sha: Some(commit_sha),
+                    commit_sha: Some(commit_sha.clone()),
                 };
 
                 // Save updated branch reference
@@ -1289,7 +1290,7 @@ impl Repository {
                 head
             }
             // Handle detached HEAD state
-            Head::Detached(_) => Head::Detached(commit_sha),
+            Head::Detached(_) => Head::Detached(commit_sha.clone()),
         };
         // Persist HEAD state to file
         new_head.save(&self.git_dir.join(HEAD_FILE)).unwrap();

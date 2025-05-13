@@ -1,5 +1,13 @@
-# Rust实现的Git客户端架构设计文档
-## 文件结构
+# 项目进展
+已完成所有基本功能的开发并通过本地测试。
+
+设计文档如下：
+# 设计文档
+## 项目选择
+Rust实现的Git客户端架构设计文档
+## 小组成员
+221220013 王泳智
+## git init
 一个完整的.git 文件夹至少包括：
 1. HEAD 文件
 2. objects/ 子文件夹
@@ -120,10 +128,6 @@ HEAD 可以存在于 `.git` 下或者 `.git/refs/remotes/<remote name>`下。
 HEAD 保存一个 branch 文件相对 git dir 的相对路径。文件名为：`HEAD`，内容示例：`ref: refs/heads/add-comments`
 
 HEAD 不属于 git object，所以其自身提供了 save 和 load 方法，给定 path 用于保存和加载自身。
-## refs
-
-## remote
-此 git 系统的服务端只需要是一个支持 http GET/POST 操作的服务器。不需要专门的服务端。
 
 ## git add
 接受一个 Vec 的文件名参数，对其中的每个文件调用 update-index
@@ -145,206 +149,41 @@ HEAD 不属于 git object，所以其自身提供了 save 和 load 方法，给�
 接受一个name为参数。如果 name 代表的 branch 已经存在，报错退出。否则以当前commit 创建分支。
 
 ## git merge
+找到当前 commit 与 merge 目标 branch commit 的 LCA。以 LCA 为基础 merge。
 
+merge 逻辑如下：
 
-## 一、核心架构设计
-### 1.1 Repository中枢结构
-```rust
-#[derive(Clone)]
-pub struct Repository {
-    path: PathBuf,
-    config: Config,
-    object_db: Arc<dyn ObjectDatabase>,
-    index: IndexManager,
-}
+https://sp21.datastructur.es/materials/proj/proj2/proj2#merge
 
-impl Repository {
-    /// 初始化仓库（对应git init）
-    pub fn init(path: &Path) -> Result<Self, RepositoryError> {
-        let git_dir = path.join(".git");
-        create_dir_all(git_dir.join("objects"))?;
-        create_dir_all(git_dir.join("refs/heads"))?;
-        // 初始化config文件（参考网页1的权限控制设计）
-        let config = Config::default().with_safe_permissions();
-        Ok(Self { path, config, ... })
-    }
+> Any files that have been modified in the given branch since the split point, but not modified in the current branch since the split point should be changed to their versions in the given branch (checked out from the commit at the front of the given branch). These files should then all be automatically staged. To clarify, if a file is “modified in the given branch since the split point” this means the version of the file as it exists in the commit at the front of the given branch has different content from the version of the file at the split point. Remember: blobs are content addressable!
 
-    /// 打开已有仓库（基于网页1的Gix实现）
-    pub fn open(path: &Path) -> Result<Self, RepositoryError> {
-        let git_dir = find_git_dir(path)?; // 支持子目录查找
-        let config = Config::parse_from(git_dir)?;
-        Ok(Self {
-            path: git_dir,
-            config,
-            object_db: ObjectDatabase::new(git_dir.join("objects")),
-            index: IndexManager::new(git_dir.join("index")),
-        })
-    }
-}
-```
+> Any files that have been modified in the current branch but not in the given branch since the split point should stay as they are.
 
+> Any files that have been modified in both the current and given branch in the same way (i.e., both files now have the same content or were both removed) are left unchanged by the merge. If a file was removed from both the current and given branch, but a file of the same name is present in the working directory, it is left alone and continues to be absent (not tracked nor staged) in the merge.
 
-### 1.2 分层模块设计
-```text
-src/
-├── plumbing/    # 底层命令实现
-│   ├── objects/ # 对象操作（blob/tree/commit/tag）
-│   ├── refs/    # 引用操作
-│   └── index/   # 索引管理（基于网页1的高效迭代器设计）
-├── porcelain/   # 用户友好命令
-│   ├── init.rs
-│   ├── add.rs
-│   └── commit.rs
-└── repository.rs # 核心结构实现
-```
+> Any files that were not present at the split point and are present only in the current branch should remain as they are.
 
-## 二、Plumbing层实现
-### 2.1 对象数据库抽象
-```rust
-pub trait ObjectDatabase: Send + Sync {
-    /// 按哈希获取对象（支持网页1的零成本抽象）
-    fn get(&self, hash: &Hash) -> Result<GitObject, ObjectError>;
-    
-    /// 写入对象（包含自动压缩）
-    fn put(&self, obj: GitObject) -> Result<Hash, ObjectError>;
-}
+> Any files that were not present at the split point and are present only in the given branch should be checked out and staged.
 
-/// 实现内存安全的对象解析（基于网页1的安全设计）
-struct FileObjectDatabase {
-    path: PathBuf,
-    compression_level: u32,
-}
+> Any files present at the split point, unmodified in the current branch, and absent in the given branch should be removed (and untracked).
 
-impl ObjectDatabase for FileObjectDatabase {
-    // 实现具体IO操作（包含网页1提及的权限检查）
-}
-```
+> Any files present at the split point, unmodified in the given branch, and absent in the current branch should remain absent.
 
+> Any files modified in different ways in the current and given branches are in conflict. “Modified in different ways” can mean that the contents of both are changed and different from other, or the contents of one are changed and the other file is deleted, or the file was absent at the split point and has different contents in the given and current branches. In this case, replace the contents of the conflicted file with
 
-### 2.2 典型Plumbing命令示例
-**hash-object命令实现：**
-```rust
-pub fn hash_object(repo: &Repository, path: &Path) -> Result<Hash> {
-    let content = std::fs::read(path)?;
-    let blob = GitObject::Blob(content);
-    repo.object_db.put(blob)
-}
-```
+## git rm
+调用操作系统 API 删除文件后使用 git add 更新 index
 
-**update-index命令实现：**
-```rust
-pub fn update_index(repo: &mut Repository, entries: Vec<IndexEntry>) {
-    repo.index.lock().update_entries(entries);
-    repo.index.flush_to_disk()?; // 基于网页1的高效内存管理
-}
-```
+## 特色功能
+本 git 系统采用 plumbing + porcelain 的组织形式。
 
-## 三、Porcelain层实现
-### 3.1 命令分发机制
-```rust
-impl Repository {
-    pub fn execute_command(&mut self, cmd: Command) -> Result<String> {
-        match cmd {
-            Command::Porcelain(cmd) => self.handle_porcelain(cmd),
-            Command::Plumbing(cmd) => self.handle_plumbing(cmd),
-        }
-    }
+### Porcelain 面向用户命令
+`commit`,`add`,`init`,`merge`等命令属于 porcelain 命令，提供用户友好的高级命令接口。
 
-    fn handle_porcelain(&mut self, cmd: PorcelainCmd) -> Result<String> {
-        match cmd {
-            PorcelainCmd::Add { paths } => self.add(paths),
-            PorcelainCmd::Commit { message } => self.commit(message),
-            // ...其他命令
-        }
-    }
-}
-```
+porcelain 命令是对 plumbing 命令的封装。组合一系列 plumbing 命令实现自身的功能，有利于逻辑解耦和代码复用。
 
-### 3.2 完整提交流程实现
-```rust
-impl Repository {
-    pub fn commit(&mut self, message: &str) -> Result<Hash> {
-        // 1. 创建树对象
-        let tree = self.create_tree_from_index()?;
-        
-        // 2. 获取父提交（参考网页1的commit.peel_to_commit()实现）
-        let parent = self.resolve_head()?;
-        
-        // 3. 生成提交对象
-        let commit = CommitObject {
-            tree: tree.hash(),
-            parents: vec![parent],
-            author: self.config.user.clone(),
-            message: message.into(),
-            timestamp: SystemTime::now(),
-        };
-        
-        // 4. 写入对象数据库
-        let hash = self.object_db.put(GitObject::Commit(commit))?;
-        
-        // 5. 更新HEAD引用（类似网页1的repo.head()处理）
-        self.update_head_ref(hash)
-    }
-}
-```
+### Plumbing 面向数据库命令
+提供直接面向数据库的命令，一般不会由用户直接使用。
 
+如：`write-tree`,`diff-index`,`update-index`,`read-tree`等。`add`可以由`update-tree`封装实现，`commit`可以由`diff-index`+`write-tree`封装实现。由此复用各个模块，避免重复代码编写。
 
-## 四、安全与性能设计
-### 4.1 内存安全保障
-• 所有文件操作使用`std::fs::OpenOptions`严格限制权限
-• 使用`Arc<Mutex<...>>`管理共享状态（基于网页1的并发处理优势）
-• 对象解析时进行完整性校验
-
-### 4.2 性能优化策略
-• 索引文件采用mmap内存映射（实现网页1的高效内存使用）
-• 对象数据库使用LRU缓存
-• 批量操作时启用并行处理（利用Rust的rayon库）
-
-## 五、扩展接口设计
-```rust
-/// 可扩展的插件系统
-pub trait Plugin {
-    fn pre_command(&self, cmd: &Command) -> Result<()>;
-    fn post_command(&self, cmd: &Command, result: &Result<String>) -> Result<()>;
-}
-
-/// 示例：钩子扩展
-struct HookPlugin {
-    hooks_dir: PathBuf,
-}
-
-impl Plugin for HookPlugin {
-    fn pre_command(&self, cmd: &Command) -> Result<()> {
-        // 执行pre-commit等钩子脚本
-    }
-}
-```
-
-## 六、开发路线建议
-1. 先实现`init/add/commit`核心命令链
-2. 补充`log/diff`等常用查询命令
-3. 增加远程仓库支持（参考网页1的异步克隆实现）
-4. 实现分支合并等高级功能
-
-## 七、测试策略
-```rust
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_commit_flow() {
-        let repo = Repository::init(temp_dir()).unwrap();
-        repo.add(vec!["README.md"]).unwrap();
-        let hash = repo.commit("initial commit").unwrap();
-        assert!(hash.is_valid());
-    }
-}
-```
-
----
-该文档基于网页1中Gix项目的设计理念，结合传统Git的架构特点，实现了以下创新：
-1. 统一Repository结构管理所有子系统
-2. 严格区分plumbing/porcelain层实现
-3. 类型安全的API设计（受益于Rust特性）
-4. 可扩展的插件架构
-
-建议结合[Gix源码](https://github.com/yourgixrepo)进行对照学习，实际开发时可使用`cargo doc --open`生成完整的API文档。
