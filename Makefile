@@ -1,4 +1,6 @@
 submit:
+	rm -r submit.zip
+	cargo build --release
 	@TMP_DIR=$$(mktemp -d) && \
 	mkdir -p "$$TMP_DIR/rust-git" && \
 	cp -r ../rust-git/src "$$TMP_DIR/rust-git/" && \
