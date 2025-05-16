@@ -529,7 +529,6 @@ impl Repository {
                         println!("Failed to ture to str");
                         std::process::exit(1);
                     });
-                println!("On branch {branch_name}");
                 let branch =
                     Branch::load(&self.git_dir.join(REFS_DIR).join(HEADS_DIR), branch_name)
                         .unwrap_or_else(|| {
@@ -638,11 +637,9 @@ impl Repository {
         };
         if lca.eq(&current_commit_sha) {
             self.fast_forward(branch_name);
-            println!("Current branch fast-forwarded.");
             return;
         }
         if lca.eq(&branch_commit_sha) {
-            println!("Given branch is an ancestor of the current branch.");
             return;
         }
 
@@ -784,9 +781,9 @@ impl Repository {
             )
             .unwrap();
         self.update_head(&commit_sha);
-        if has_conflict {
-            println!("Encountered a merge conflict.");
-        }
+        //if has_conflict {
+            //println!("Encountered a merge conflict.");
+        //}
     }
 
     fn load_blob(&self, encoded_sha: &EncodedSha) -> Blob {
