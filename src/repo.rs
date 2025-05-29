@@ -421,30 +421,15 @@ impl Repository {
     /// # Arguments
     /// * `index` - Target index to check out
     fn checkout_index(&self, index: &Index) {
-        // Get current commit data
-        let current_commit_sha = self.get_current_commit().unwrap_or_else(|| {
-            println!("Failed to fetch current commit");
-            std::process::exit(1);
-        });
-        let current_commit_data = self
-            .obj_db
-            .retrieve(current_commit_sha)
-            .unwrap_or_else(|why| {
-                println!("{}", why.to_string());
-                std::process::exit(1);
-            });
-        let current_commit = Commit::deserialize(&current_commit_data).unwrap_or_else(|why| {
-            println!("{}", why.to_string());
-            std::process::exit(1);
-        });
+        let head = self.get_head().unwrap();
 
         // Build index from current commit's tree
-        let current_commit_index = self
-            .read_tree(&current_commit.get_tree_sha())
-            .unwrap_or_else(|why| {
-                println!("{}", why.to_string());
-                std::process::exit(1);
-            });
+        let current_commit_index = match head {
+            Head::Symbolic(path_buf) => {
+                self.read_branch_to_index(path_buf.file_name().unwrap().to_str().unwrap())
+            },
+            Head::Detached(encoded_sha) => todo!(),
+        };
 
         // Calculate differences between current state and target index
         let diff = self.diff_index(&current_commit_index, index);
@@ -529,7 +514,6 @@ impl Repository {
                         println!("Failed to ture to str");
                         std::process::exit(1);
                     });
-                println!("On branch {branch_name}");
                 let branch =
                     Branch::load(&self.git_dir.join(REFS_DIR).join(HEADS_DIR), branch_name)
                         .unwrap_or_else(|| {
@@ -638,11 +622,9 @@ impl Repository {
         };
         if lca.eq(&current_commit_sha) {
             self.fast_forward(branch_name);
-            println!("Current branch fast-forwarded.");
             return;
         }
         if lca.eq(&branch_commit_sha) {
-            println!("Given branch is an ancestor of the current branch.");
             return;
         }
 
@@ -784,9 +766,9 @@ impl Repository {
             )
             .unwrap();
         self.update_head(&commit_sha);
-        if has_conflict {
-            println!("Encountered a merge conflict.");
-        }
+        //if has_conflict {
+            //println!("Encountered a merge conflict.");
+        //}
     }
 
     fn load_blob(&self, encoded_sha: &EncodedSha) -> Blob {
@@ -947,6 +929,38 @@ impl Repository {
         branch
     }
 
+    fn read_branch_to_index(&self, branch_name: &str) -> Index {
+        let branch = match self.load_branch(branch_name) {
+            Some(b) => b,
+            None => {
+                println!("No such branch exists.");
+                std::process::exit(1);
+            }
+        };
+        let commit_sha = branch.commit_sha;
+        if commit_sha.is_some() {
+            let commit_sha = commit_sha.unwrap();
+
+            // Load commit data
+            let commit_data = self.obj_db.retrieve(commit_sha).unwrap();
+            let commit = Commit::deserialize(&commit_data).unwrap();
+
+            // Build index from commit's tree
+            let tree_sha = commit.get_tree_sha();
+            let index = self.read_tree(&tree_sha).unwrap_or_else(|why| {
+                println!("{why}");
+                std::process::exit(1);
+            });
+            return index;
+        } else {
+            // empty branch
+            // remove all files checked by current index
+            let index = Index::new();
+            return index;
+        }
+
+    }
+
     /// Checks out a branch by updating HEAD and working directory
     ///
     /// # Arguments
@@ -962,39 +976,25 @@ impl Repository {
         if let Some(head) = self.get_head() {
             if let Head::Symbolic(current_branch_path) = head {
                 if current_branch_path.file_name().unwrap().to_str().unwrap() == &branch.name {
-                    println!("No need to checkout current branch");
-                    std::process::exit(1);
+                    //println!("No need to checkout current branch");
+                    std::process::exit(0);
                 }
             }
         }
 
         let head = Head::Symbolic(Path::new(REFS_DIR).join(HEADS_DIR).join(branch.name));
 
-        let commit_sha = branch.commit_sha;
-        if commit_sha.is_some() {
-            let commit_sha = commit_sha.unwrap();
+        let index = self.read_branch_to_index(branch_name);
+        // Update working directory
+        self.checkout_index(&index);
 
-            // Load commit data
-            let commit_data = self.obj_db.retrieve(commit_sha).unwrap();
-            let commit = Commit::deserialize(&commit_data).unwrap();
-
-            // Build index from commit's tree
-            let tree_sha = commit.get_tree_sha();
-            let index = self.read_tree(&tree_sha).unwrap_or_else(|why| {
+        // Save index state
+        index
+            .save(&self.git_dir.join(INDEX_FILE))
+            .unwrap_or_else(|why| {
                 println!("{why}");
                 std::process::exit(1);
             });
-            // Update working directory
-            self.checkout_index(&index);
-
-            // Save index state
-            index
-                .save(&self.git_dir.join(INDEX_FILE))
-                .unwrap_or_else(|why| {
-                    println!("{why}");
-                    std::process::exit(1);
-                });
-        }
         head.save(&self.git_dir.join(HEAD_FILE)).unwrap();
     }
 

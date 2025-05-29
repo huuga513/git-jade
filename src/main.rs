@@ -113,10 +113,8 @@ fn main() {
             let repo_dir = find_repo_dir();
             let repo = open_repo(&repo_dir);
             if delete {
-                println!("Deleting branch '{}'", name);
                 repo.rm_branch(name);
             } else {
-                println!("Creating branch '{}'", name);
                 repo.branch(name);
             }
         }
